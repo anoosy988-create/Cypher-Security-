@@ -16,32 +16,49 @@ class Database {
         } catch (err) {
             console.error('Error loading database:', err);
         }
-        return {
-            logChannel: null,
-            vanityProtection: true
-        };
+        return {};
     }
 
     save() {
         fs.writeFileSync(DB_PATH, JSON.stringify(this.data, null, 2));
     }
 
-    setLogChannel(channelId) {
-        this.data.logChannel = channelId;
+    _guild(guildId) {
+        if (!this.data[guildId]) {
+            this.data[guildId] = {
+                logChannel: null,
+                vanityURL: '',
+                vanityProtection: true
+            };
+        }
+        return this.data[guildId];
+    }
+
+    setLogChannel(guildId, channelId) {
+        this._guild(guildId).logChannel = channelId;
         this.save();
     }
 
-    getLogChannel() {
-        return this.data.logChannel;
+    getLogChannel(guildId) {
+        return this._guild(guildId).logChannel;
     }
 
-    toggleVanityProtection(enabled) {
-        this.data.vanityProtection = enabled;
+    setVanityURL(guildId, url) {
+        this._guild(guildId).vanityURL = url;
         this.save();
     }
 
-    isVanityProtectionEnabled() {
-        return this.data.vanityProtection;
+    getVanityURL(guildId) {
+        return this._guild(guildId).vanityURL;
+    }
+
+    toggleVanityProtection(guildId, enabled) {
+        this._guild(guildId).vanityProtection = enabled;
+        this.save();
+    }
+
+    isVanityProtectionEnabled(guildId) {
+        return this._guild(guildId).vanityProtection;
     }
 }
 
