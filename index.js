@@ -112,19 +112,8 @@ const slashCommands = [
     }
 ];
 
+// تسجيل السلاشات فوراً لما يدخل سيرفر جديد
 client.on('guildCreate', async (guild) => {
-    if (guild.ownerId !== OWNER_ID) {
-        try {
-            const owner = await client.users.fetch(guild.ownerId);
-            await owner.send(`تم طرد البوت من سيرفر **${guild.name}** لأنه غير مصرح له بالدخول.`).catch(() => {});
-            await guild.leave();
-            console.log(`طلعت من ${guild.name} — السيرفر مو للأونر.`);
-            return;
-        } catch (err) {
-            console.error(`فشل الطرد من ${guild.name}:`, err);
-        }
-    }
-
     try {
         await guild.commands.set(slashCommands);
         console.log(`تم تسجيل السلاشات فوراً في: ${guild.name}`);
