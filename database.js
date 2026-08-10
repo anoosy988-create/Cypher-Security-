@@ -1,66 +1,98 @@
-// database.js
+require('dotenv').config();
 const fs = require('fs');
-const path = require('path');
+const { MongoClient } = require('mongodb');
 
-const DB_PATH = path.join(__dirname, 'database.json');
+const MONGO_URI = process.env.MONGODB_URI;
+let db = null;
+let mongoConnected = false;
 
-class Database {
-    constructor() {
-        this.data = this.load();
-    }
+const LOCAL_FILE = './local_db.json';
+let localData = {};
 
-    load() {
-        try {
-            if (fs.existsSync(DB_PATH)) {
-                return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-            }
-        } catch (err) {
-            console.error('Error loading database:', err);
-        }
-        return {};
-    }
-
-    save() {
-        fs.writeFileSync(DB_PATH, JSON.stringify(this.data, null, 2));
-    }
-
-    _guild(guildId) {
-        if (!this.data[guildId]) {
-            this.data[guildId] = {
-                logChannel: null,
-                vanityURL: '',
-                vanityProtection: true
-            };
-        }
-        return this.data[guildId];
-    }
-
-    setLogChannel(guildId, channelId) {
-        this._guild(guildId).logChannel = channelId;
-        this.save();
-    }
-
-    getLogChannel(guildId) {
-        return this._guild(guildId).logChannel;
-    }
-
-    setVanityURL(guildId, url) {
-        this._guild(guildId).vanityURL = url;
-        this.save();
-    }
-
-    getVanityURL(guildId) {
-        return this._guild(guildId).vanityURL;
-    }
-
-    toggleVanityProtection(guildId, enabled) {
-        this._guild(guildId).vanityProtection = enabled;
-        this.save();
-    }
-
-    isVanityProtectionEnabled(guildId) {
-        return this._guild(guildId).vanityProtection;
-    }
+if (fs.existsSync(LOCAL_FILE)) {
+    try { localData = JSON.parse(fs.readFileSync(LOCAL_FILE, 'utf8')); } catch { localData = {}; }
 }
 
-module.exports = new Database();
+function saveLocal() {
+    fs.writeFileSync(LOCAL_FILE, JSON.stringify(localData, null, 2), 'utf8');
+}
+
+async function connectMongo() {
+    if (!MONGO_URI) return;
+    try {
+        const client = new MongoClient(MONGO_URI);
+        await client.connect();
+        db = client.db('cypher_bot');
+        mongoConnected = true;
+        console.log('✅ [DB] MongoDB connected — settings will persist on restart.');
+    } catch (err) {
+        console.error('❌ [DB] MongoDB failed, using local files:', err.message);
+    }
+}
+connectMongo();
+
+async function updateGuild(guildId, update) {
+    if (!mongoConnected || !db) return;
+    await db.collection('guilds').updateOne(
+        { _id: guildId },
+        { $set: update },
+        { upsert: true }
+    );
+}
+
+function getLogChannel(guildId) {
+    return localData[guildId]?.logChannel || null;
+}
+
+async function setLogChannel(guildId, channelId) {
+    if (!localData[guildId]) localData[guildId] = {};
+    localData[guildId].logChannel = channelId;
+    saveLocal();
+    if (mongoConnected) await updateGuild(guildId, { logChannel: channelId });
+}
+
+async function toggleVanityProtection(guildId, enabled) {
+    if (!localData[guildId]) localData[guildId] = {};
+    localData[guildId].vanityProtection = enabled;
+    saveLocal();
+    if (mongoConnected) await updateGuild(guildId, { vanityProtection: enabled });
+}
+
+function isVanityProtectionEnabled(guildId) {
+    return !!localData[guildId]?.vanityProtection;
+}
+
+async function setVanityURL(guildId, url) {
+    if (!localData[guildId]) localData[guildId] = {};
+    localData[guildId].vanityURL = url;
+    saveLocal();
+    if (mongoConnected) await updateGuild(guildId, { vanityURL: url });
+}
+
+function getVanityURL(guildId) {
+    return localData[guildId]?.vanityURL || null;
+}
+
+setTimeout(async () => {
+    if (!mongoConnected || !db) return;
+    try {
+        const docs = await db.collection('guilds').find({}).toArray();
+        for (const doc of docs) {
+            if (!localData[doc._id]) localData[doc._id] = {};
+            if (doc.logChannel) localData[doc._id].logChannel = doc.logChannel;
+            if (doc.vanityProtection) localData[doc._id].vanityProtection = doc.vanityProtection;
+            if (doc.vanityURL) localData[doc._id].vanityURL = doc.vanityURL;
+        }
+        saveLocal();
+        console.log('✅ [DB] Synced', docs.length, 'guilds from MongoDB.');
+    } catch (e) {}
+}, 3000);
+
+module.exports = {
+    getLogChannel,
+    setLogChannel,
+    toggleVanityProtection,
+    isVanityProtectionEnabled,
+    setVanityURL,
+    getVanityURL
+};
