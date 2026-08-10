@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, Colors, PermissionsBitField, AuditLogEvent } = require('discord.js');
+const { joinVoiceChannel } = require('@discordjs/voice');
 const db = require('./database');
 const config = require('./config.json');
 
@@ -70,24 +71,39 @@ client.on('interactionCreate', async (interaction) => {
 
     if (commandName === 'afk-voice') {
         const ch = interaction.options.getChannel('channel');
-        db.setAfkChannel(ch.id);
-        return interaction.reply({
-            content: `تم تحديد ${ch} روم AFK.`,
-            ephemeral: true
-        });
+
+        try {
+            joinVoiceChannel({
+                channelId: ch.id,
+                guildId: interaction.guild.id,
+                adapterCreator: interaction.guild.voiceAdapterCreator,
+            });
+
+            return interaction.reply({
+                content: `دخلت ${ch} وأنا AFK هناك الآن.`,
+                ephemeral: true
+            });
+        } catch (err) {
+            console.error(err);
+            return interaction.reply({
+                content: 'ما قدرت أدخل الروم، تأكد من صلاحياتي.',
+                ephemeral: true
+            });
+        }
     }
 
     if (commandName === 'settings') {
         const logCh = db.getLogChannel() ? `<#${db.getLogChannel()}>` : 'غير محدد';
-        const afkCh = db.getAfkChannel() ? `<#${db.getAfkChannel()}>` : 'غير محدد';
         const vanity = db.isVanityProtectionEnabled() ? 'مفعلة' : 'معطلة';
+        const voiceConnection = interaction.guild.members.me?.voice?.channel;
+        const afkStatus = voiceConnection ? `في ${voiceConnection}` : 'برا الفويس';
 
         const embed = new EmbedBuilder()
             .setTitle('إعدادات البوت')
             .addFields(
                 { name: 'روم اللوق', value: logCh, inline: true },
-                { name: 'روم AFK', value: afkCh, inline: true },
-                { name: 'حماية الرابط', value: vanity, inline: true }
+                { name: 'حماية الرابط', value: vanity, inline: true },
+                { name: 'الحالة', value: afkStatus, inline: true }
             )
             .setColor(Colors.Gold)
             .setTimestamp();
