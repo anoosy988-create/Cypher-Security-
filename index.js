@@ -1,10 +1,20 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder, Colors, PermissionsBitField, AuditLogEvent } = require('discord.js');
+const http = require('http');
+const { Client, GatewayIntentBits, EmbedBuilder, Colors, PermissionsBitField, AuditLogEvent, MessageFlags } = require('discord.js');
 const { joinVoiceChannel } = require('@discordjs/voice');
 const db = require('./database');
 const config = require('./config.json');
 
 const OWNER_ID = process.env.OWNER_ID;
+
+// HTTP server يشتغل فوراً عشان Render
+const server = http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Cypher is running');
+});
+server.listen(process.env.PORT || 3000, () => {
+    console.log(`HTTP server on port ${process.env.PORT || 3000}`);
+});
 
 const client = new Client({
     intents: [
@@ -17,7 +27,7 @@ const client = new Client({
 });
 
 function getLogChannel(guild) {
-    const id = db.getLogChannel();
+    const id = db.getLogChannel(guild.id);
     return id ? guild.channels.cache.get(id) : null;
 }
 
@@ -27,45 +37,45 @@ function logEmbed(title, fields, color = Colors.Blue) {
         .addFields(fields)
         .setColor(color)
         .setTimestamp()
-        .setFooter({ text: 'Voice Logger' });
+        .setFooter({ text: 'Cypher' });
 }
 
 // ─── slash commands ───
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
+    if (!interaction.guild) return;
 
     const { commandName } = interaction;
+    const guildId = interaction.guild.id;
 
-    // حماية الرابط = أونر البوت فقط
     if (commandName === 'vanity-protect') {
         if (interaction.user.id !== OWNER_ID) {
             return interaction.reply({
                 content: 'هذا الأمر لصاحب البوت فقط.',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
         const on = interaction.options.getBoolean('enabled');
-        db.toggleVanityProtection(on);
+        db.toggleVanityProtection(guildId, on);
         return interaction.reply({
             content: on ? 'حماية الرابط مفعلة.' : 'حماية الرابط معطلة.',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
-    // باقي الأوامر = الإدارة فقط
     if (!interaction.memberPermissions.has(PermissionsBitField.Flags.Administrator)) {
         return interaction.reply({
             content: 'هذا الأمر للإدارة فقط.',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
     if (commandName === 'setlog') {
         const ch = interaction.options.getChannel('channel');
-        db.setLogChannel(ch.id);
+        db.setLogChannel(guildId, ch.id);
         return interaction.reply({
             content: `تم تحديد ${ch} روم اللوق.`,
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -81,20 +91,20 @@ client.on('interactionCreate', async (interaction) => {
 
             return interaction.reply({
                 content: `دخلت ${ch} وأنا AFK هناك الآن.`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         } catch (err) {
             console.error(err);
             return interaction.reply({
                 content: 'ما قدرت أدخل الروم، تأكد من صلاحياتي.',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     }
 
     if (commandName === 'settings') {
-        const logCh = db.getLogChannel() ? `<#${db.getLogChannel()}>` : 'غير محدد';
-        const vanity = db.isVanityProtectionEnabled() ? 'مفعلة' : 'معطلة';
+        const logCh = db.getLogChannel(guildId) ? `<#${db.getLogChannel(guildId)}>` : 'غير محدد';
+        const vanity = db.isVanityProtectionEnabled(guildId) ? 'مفعلة' : 'معطلة';
         const voiceConnection = interaction.guild.members.me?.voice?.channel;
         const afkStatus = voiceConnection ? `في ${voiceConnection}` : 'برا الفويس';
 
@@ -108,11 +118,11 @@ client.on('interactionCreate', async (interaction) => {
             .setColor(Colors.Gold)
             .setTimestamp();
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 });
 
-// ─── voice state logging (admin actions only) ───
+// ─── voice state logging ───
 client.on('voiceStateUpdate', async (oldState, newState) => {
     const logCh = getLogChannel(newState.guild);
     if (!logCh) return;
@@ -121,7 +131,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     const oldCh = oldState.channel;
     const newCh = newState.channel;
 
-    // Server Mute
     if (oldState.serverMute !== newState.serverMute) {
         const action = newState.serverMute ? 'كتم الصوت' : 'فك الكتم';
         const color = newState.serverMute ? Colors.Red : Colors.Green;
@@ -153,7 +162,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }, 800);
     }
 
-    // Server Deaf
     if (oldState.serverDeaf !== newState.serverDeaf) {
         const action = newState.serverDeaf ? 'دفن السماعة' : 'فك الدفن';
         const color = newState.serverDeaf ? Colors.Red : Colors.Green;
@@ -185,7 +193,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }, 800);
     }
 
-    // Disconnect
     if (oldCh && !newCh) {
         setTimeout(async () => {
             try {
@@ -216,7 +223,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
 // ─── vanity protection ───
 client.on('guildUpdate', async (oldGuild, newGuild) => {
-    if (!db.isVanityProtectionEnabled()) return;
+    if (!db.isVanityProtectionEnabled(newGuild.id)) return;
     if (!config.vanityURL) return;
 
     const oldVanity = oldGuild.vanityURLCode;
@@ -238,7 +245,6 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
             if (entry) {
                 const executor = entry.executor;
 
-                // 1. لوق: اكتشاف التغيير
                 if (logCh) {
                     const detectEmbed = new EmbedBuilder()
                         .setTitle('تنبيه: رابط السيرفر تغيّر')
@@ -252,7 +258,6 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
                     await logCh.send({ embeds: [detectEmbed] });
                 }
 
-                // 2. إرجاع الرابط
                 let restored = false;
                 try {
                     await newGuild.setVanityCode(config.vanityURL);
@@ -261,7 +266,6 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
                     console.error('Failed to restore vanity:', e);
                 }
 
-                // 3. لوق: نتيجة الإرجاع
                 if (logCh) {
                     const restoreEmbed = new EmbedBuilder()
                         .setTitle(restored ? 'تم إرجاع الرابط' : 'فشل إرجاع الرابط')
@@ -275,7 +279,6 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
                     await logCh.send({ embeds: [restoreEmbed] });
                 }
 
-                // 4. باند
                 let banned = false;
                 try {
                     const member = await newGuild.members.fetch(executor.id);
@@ -287,7 +290,6 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
                     console.error('Failed to ban:', e);
                 }
 
-                // 5. لوق: نتيجة الباند
                 if (logCh) {
                     const banEmbed = new EmbedBuilder()
                         .setTitle(banned ? 'تم الباند' : 'فشل الباند')
@@ -309,8 +311,9 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
 
 // ─── ready ───
 client.once('ready', () => {
-    console.log(`البوت شغال: ${client.user.tag}`);
-    client.user.setActivity('Voice Logger', { type: 4 });
+    console.log(`Cypher شغال: ${client.user.tag}`);
+    console.log(`في ${client.guilds.cache.size} سيرفر`);
+    client.user.setActivity('Cypher', { type: 4 });
 });
 
 client.on('error', console.error);
