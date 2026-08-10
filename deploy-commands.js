@@ -25,6 +25,16 @@ const commands = [
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     new SlashCommandBuilder()
+        .setName('setvanity')
+        .setDescription('تحديد رابط السيرفر المخصص للحماية')
+        .addStringOption(option =>
+            option.setName('url')
+                .setDescription('اكتب الرابط بدون discord.gg/ مثلاً: ab10')
+                .setRequired(true)
+        )
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+    new SlashCommandBuilder()
         .setName('vanity-protect')
         .setDescription('تفعيل/تعطيل حماية رابط السيرفر')
         .addBooleanOption(option =>
@@ -44,12 +54,12 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 (async () => {
     try {
-        console.log('جاري نشر السلاش كوماند...');
+        console.log('جاري نشر السلاش كوماند عالمياً...');
         await rest.put(
-            Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+            Routes.applicationCommands(process.env.CLIENT_ID),
             { body: commands }
         );
-        console.log('تم نشر السلاش كوماند بنجاح!');
+        console.log('تم نشر السلاش كوماند في كل السيرفرات!');
     } catch (error) {
         console.error('خطأ في النشر:', error);
     }
