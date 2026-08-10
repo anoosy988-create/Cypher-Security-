@@ -3,11 +3,9 @@ const http = require('http');
 const { Client, GatewayIntentBits, EmbedBuilder, Colors, PermissionsBitField, AuditLogEvent, MessageFlags } = require('discord.js');
 const { joinVoiceChannel } = require('@discordjs/voice');
 const db = require('./database');
-const config = require('./config.json');
 
 const OWNER_ID = process.env.OWNER_ID;
 
-// HTTP server يشتغل فوراً عشان Render
 const server = http.createServer((req, res) => {
     res.writeHead(200);
     res.end('Cypher is running');
@@ -40,6 +38,11 @@ function logEmbed(title, fields, color = Colors.Blue) {
         .setFooter({ text: 'Cypher' });
 }
 
+function isAboveBot(member, guild) {
+    const botMember = guild.members.me;
+    return member.roles.highest.position > botMember.roles.highest.position;
+}
+
 // ─── slash commands ───
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
@@ -49,9 +52,9 @@ client.on('interactionCreate', async (interaction) => {
     const guildId = interaction.guild.id;
 
     if (commandName === 'vanity-protect') {
-        if (interaction.user.id !== OWNER_ID) {
+        if (!isAboveBot(interaction.member, interaction.guild) && interaction.user.id !== OWNER_ID) {
             return interaction.reply({
-                content: 'هذا الأمر لصاحب البوت فقط.',
+                content: 'لازم تكون فوق البوت عشان تستخدم هذا الأمر.',
                 flags: MessageFlags.Ephemeral
             });
         }
@@ -102,9 +105,19 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
+    if (commandName === 'setvanity') {
+        const url = interaction.options.getString('url').trim();
+        db.setVanityURL(guildId, url);
+        return interaction.reply({
+            content: `تم تحديد رابط السيرفر: discord.gg/${url}`,
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
     if (commandName === 'settings') {
         const logCh = db.getLogChannel(guildId) ? `<#${db.getLogChannel(guildId)}>` : 'غير محدد';
         const vanity = db.isVanityProtectionEnabled(guildId) ? 'مفعلة' : 'معطلة';
+        const vanityURL = db.getVanityURL(guildId) || 'غير محدد';
         const voiceConnection = interaction.guild.members.me?.voice?.channel;
         const afkStatus = voiceConnection ? `في ${voiceConnection}` : 'برا الفويس';
 
@@ -112,6 +125,7 @@ client.on('interactionCreate', async (interaction) => {
             .setTitle('إعدادات البوت')
             .addFields(
                 { name: 'روم اللوق', value: logCh, inline: true },
+                { name: 'رابط السيرفر', value: `discord.gg/${vanityURL}`, inline: true },
                 { name: 'حماية الرابط', value: vanity, inline: true },
                 { name: 'الحالة', value: afkStatus, inline: true }
             )
@@ -223,8 +237,11 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
 // ─── vanity protection ───
 client.on('guildUpdate', async (oldGuild, newGuild) => {
-    if (!db.isVanityProtectionEnabled(newGuild.id)) return;
-    if (!config.vanityURL) return;
+    const guildId = newGuild.id;
+    if (!db.isVanityProtectionEnabled(guildId)) return;
+    
+    const vanityURL = db.getVanityURL(guildId);
+    if (!vanityURL) return;
 
     const oldVanity = oldGuild.vanityURLCode;
     const newVanity = newGuild.vanityURLCode;
@@ -260,7 +277,7 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
 
                 let restored = false;
                 try {
-                    await newGuild.setVanityCode(config.vanityURL);
+                    await newGuild.setVanityCode(vanityURL);
                     restored = true;
                 } catch (e) {
                     console.error('Failed to restore vanity:', e);
@@ -271,7 +288,7 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
                         .setTitle(restored ? 'تم إرجاع الرابط' : 'فشل إرجاع الرابط')
                         .setDescription(
                             restored
-                                ? `تم إرجاع الرابط إلى: discord.gg/${config.vanityURL}`
+                                ? `تم إرجاع الرابط إلى: discord.gg/${vanityURL}`
                                 : 'لم يتمكن البوت من إرجاع الرابط، تحقق من الصلاحيات.'
                         )
                         .setColor(restored ? Colors.Green : Colors.DarkOrange)
