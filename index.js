@@ -112,7 +112,6 @@ const slashCommands = [
     }
 ];
 
-// تسجيل السلاشات فوراً لما يدخل سيرفر جديد
 client.on('guildCreate', async (guild) => {
     try {
         await guild.commands.set(slashCommands);
@@ -214,6 +213,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
+// ─── voice state logging ───
 client.on('voiceStateUpdate', async (oldState, newState) => {
     if (Date.now() - botReadyAt < 5000) return;
 
@@ -224,6 +224,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     const oldCh = oldState.channel;
     const newCh = newState.channel;
 
+    // Server Mute
     if (oldState.serverMute !== newState.serverMute) {
         const action = newState.serverMute ? 'كتم الصوت' : 'فك الكتم';
         const color = newState.serverMute ? Colors.Red : Colors.Green;
@@ -235,12 +236,12 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                     limit: 10
                 });
                 const entry = audit.entries.find(e =>
-                    e.target.id === member.id &&
-                    e.createdTimestamp > Date.now() - 10000 &&
-                    e.changes.some(c => c.key === 'mute')
+                    e.target && e.target.id === member.id &&
+                    e.createdTimestamp > Date.now() - 15000 &&
+                    e.changes && e.changes.some(c => c.key === 'mute')
                 );
 
-                const by = entry ? `<@${entry.executor.id}>` : 'غير معروف';
+                const by = entry && entry.executor ? `<@${entry.executor.id}>` : 'غير معروف';
 
                 const embed = logEmbed(action, [
                     { name: 'العضو', value: `<@${member.id}>`, inline: true },
@@ -250,11 +251,12 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
                 await logCh.send({ embeds: [embed] });
             } catch (e) {
-                console.error('Mute audit error:', e);
+                console.error('Mute audit error:', e.message);
             }
-        }, 1500);
+        }, 1200);
     }
 
+    // Server Deaf
     if (oldState.serverDeaf !== newState.serverDeaf) {
         const action = newState.serverDeaf ? 'دفن السماعة' : 'فك الدفن';
         const color = newState.serverDeaf ? Colors.Red : Colors.Green;
@@ -266,12 +268,12 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                     limit: 10
                 });
                 const entry = audit.entries.find(e =>
-                    e.target.id === member.id &&
-                    e.createdTimestamp > Date.now() - 10000 &&
-                    e.changes.some(c => c.key === 'deaf')
+                    e.target && e.target.id === member.id &&
+                    e.createdTimestamp > Date.now() - 15000 &&
+                    e.changes && e.changes.some(c => c.key === 'deaf')
                 );
 
-                const by = entry ? `<@${entry.executor.id}>` : 'غير معروف';
+                const by = entry && entry.executor ? `<@${entry.executor.id}>` : 'غير معروف';
 
                 const embed = logEmbed(action, [
                     { name: 'العضو', value: `<@${member.id}>`, inline: true },
@@ -281,24 +283,28 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
                 await logCh.send({ embeds: [embed] });
             } catch (e) {
-                console.error('Deaf audit error:', e);
+                console.error('Deaf audit error:', e.message);
             }
-        }, 1500);
+        }, 1200);
     }
 
+    // Disconnect (طرد من الفويس)
     if (oldCh && !newCh) {
+        // ننتظر شوي عشان الـ Audit Log يتسجل
         setTimeout(async () => {
             try {
                 const audit = await oldState.guild.fetchAuditLogs({
                     type: AuditLogEvent.MemberDisconnect,
-                    limit: 10
+                    limit: 15
                 });
+
+                // ندور في آخر 15 ثانية
                 const entry = audit.entries.find(e =>
-                    e.target.id === member.id &&
-                    e.createdTimestamp > Date.now() - 10000
+                    e.target && e.target.id === member.id &&
+                    e.createdTimestamp > Date.now() - 15000
                 );
 
-                if (entry) {
+                if (entry && entry.executor) {
                     const embed = logEmbed('طرد من الفويس', [
                         { name: 'العضو', value: `<@${member.id}>`, inline: true },
                         { name: 'القناة', value: oldCh.name, inline: true },
@@ -308,16 +314,17 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                     await logCh.send({ embeds: [embed] });
                 }
             } catch (e) {
-                console.error('Disconnect audit error:', e);
+                console.error('Disconnect audit error:', e.message);
             }
-        }, 1500);
+        }, 2000);
     }
 });
 
+// ─── vanity protection ───
 client.on('guildUpdate', async (oldGuild, newGuild) => {
     const guildId = newGuild.id;
     if (!db.isVanityProtectionEnabled(guildId)) return;
-    
+
     const vanityURL = db.getVanityURL(guildId);
     if (!vanityURL) return;
 
@@ -334,10 +341,10 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
             });
             const entry = audit.entries.find(e =>
                 e.createdTimestamp > Date.now() - 3000 &&
-                e.executor.id !== client.user.id
+                e.executor && e.executor.id !== client.user.id
             );
 
-            if (entry) {
+            if (entry && entry.executor) {
                 const executor = entry.executor;
 
                 if (logCh) {
@@ -404,6 +411,7 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
     }
 });
 
+// ─── ready ───
 client.once('ready', () => {
     botReadyAt = Date.now();
     console.log(`Cypher شغال: ${client.user.tag}`);
