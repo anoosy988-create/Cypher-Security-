@@ -18,7 +18,6 @@ class Database {
         }
         return {
             logChannel: null,
-            afkChannel: null,
             vanityProtection: true
         };
     }
@@ -34,15 +33,6 @@ class Database {
 
     getLogChannel() {
         return this.data.logChannel;
-    }
-
-    setAfkChannel(channelId) {
-        this.data.afkChannel = channelId;
-        this.save();
-    }
-
-    getAfkChannel() {
-        return this.data.afkChannel;
     }
 
     toggleVanityProtection(enabled) {
