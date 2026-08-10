@@ -24,6 +24,8 @@ const client = new Client({
     ]
 });
 
+let botReadyAt = 0;
+
 function getLogChannel(guild) {
     const id = db.getLogChannel(guild.id);
     return id ? guild.channels.cache.get(id) : null;
@@ -43,7 +45,85 @@ function isAboveBot(member, guild) {
     return member.roles.highest.position > botMember.roles.highest.position;
 }
 
-// ─── slash commands ───
+// ─── slash commands data ───
+const slashCommands = [
+    {
+        name: 'setlog',
+        description: 'تحديد روم لوق الفويسات',
+        type: 1,
+        default_member_permissions: '8',
+        options: [
+            {
+                name: 'channel',
+                description: 'اختر روم اللوق',
+                type: 7,
+                channel_types: [0],
+                required: true
+            }
+        ]
+    },
+    {
+        name: 'afk-voice',
+        description: 'يدخل البوت روم الفويس المحدد',
+        type: 1,
+        default_member_permissions: '8',
+        options: [
+            {
+                name: 'channel',
+                description: 'اختر روم الفويس',
+                type: 7,
+                channel_types: [2],
+                required: true
+            }
+        ]
+    },
+    {
+        name: 'setvanity',
+        description: 'تحديد رابط السيرفر المخصص للحماية',
+        type: 1,
+        default_member_permissions: '8',
+        options: [
+            {
+                name: 'url',
+                description: 'اكتب الرابط بدون discord.gg/ مثلاً: ab10',
+                type: 3,
+                required: true
+            }
+        ]
+    },
+    {
+        name: 'vanity-protect',
+        description: 'تفعيل/تعطيل حماية رابط السيرفر',
+        type: 1,
+        default_member_permissions: '8',
+        options: [
+            {
+                name: 'enabled',
+                description: 'تفعيل أو تعطيل',
+                type: 5,
+                required: true
+            }
+        ]
+    },
+    {
+        name: 'settings',
+        description: 'عرض إعدادات البوت الحالية',
+        type: 1,
+        default_member_permissions: '8'
+    }
+];
+
+// ─── register commands instantly when joining a new guild ───
+client.on('guildCreate', async (guild) => {
+    try {
+        await guild.commands.set(slashCommands);
+        console.log(`تم تسجيل السلاشات فوراً في: ${guild.name}`);
+    } catch (err) {
+        console.error(`فشل تسجيل السلاشات في ${guild.name}:`, err);
+    }
+});
+
+// ─── slash commands handler ───
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     if (!interaction.guild) return;
@@ -138,6 +218,8 @@ client.on('interactionCreate', async (interaction) => {
 
 // ─── voice state logging ───
 client.on('voiceStateUpdate', async (oldState, newState) => {
+    if (Date.now() - botReadyAt < 5000) return;
+
     const logCh = getLogChannel(newState.guild);
     if (!logCh) return;
 
@@ -153,11 +235,11 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             try {
                 const audit = await newState.guild.fetchAuditLogs({
                     type: AuditLogEvent.MemberUpdate,
-                    limit: 5
+                    limit: 10
                 });
                 const entry = audit.entries.find(e =>
                     e.target.id === member.id &&
-                    e.createdTimestamp > Date.now() - 4000 &&
+                    e.createdTimestamp > Date.now() - 10000 &&
                     e.changes.some(c => c.key === 'mute')
                 );
 
@@ -173,7 +255,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             } catch (e) {
                 console.error('Mute audit error:', e);
             }
-        }, 800);
+        }, 1500);
     }
 
     if (oldState.serverDeaf !== newState.serverDeaf) {
@@ -184,11 +266,11 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             try {
                 const audit = await newState.guild.fetchAuditLogs({
                     type: AuditLogEvent.MemberUpdate,
-                    limit: 5
+                    limit: 10
                 });
                 const entry = audit.entries.find(e =>
                     e.target.id === member.id &&
-                    e.createdTimestamp > Date.now() - 4000 &&
+                    e.createdTimestamp > Date.now() - 10000 &&
                     e.changes.some(c => c.key === 'deaf')
                 );
 
@@ -204,7 +286,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             } catch (e) {
                 console.error('Deaf audit error:', e);
             }
-        }, 800);
+        }, 1500);
     }
 
     if (oldCh && !newCh) {
@@ -212,11 +294,11 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             try {
                 const audit = await oldState.guild.fetchAuditLogs({
                     type: AuditLogEvent.MemberDisconnect,
-                    limit: 3
+                    limit: 10
                 });
                 const entry = audit.entries.find(e =>
                     e.target.id === member.id &&
-                    e.createdTimestamp > Date.now() - 4000
+                    e.createdTimestamp > Date.now() - 10000
                 );
 
                 if (entry) {
@@ -231,7 +313,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             } catch (e) {
                 console.error('Disconnect audit error:', e);
             }
-        }, 800);
+        }, 1500);
     }
 });
 
@@ -328,6 +410,7 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
 
 // ─── ready ───
 client.once('ready', () => {
+    botReadyAt = Date.now();
     console.log(`Cypher شغال: ${client.user.tag}`);
     console.log(`في ${client.guilds.cache.size} سيرفر`);
     client.user.setActivity('Cypher', { type: 4 });
