@@ -45,7 +45,6 @@ function isAboveBot(member, guild) {
     return member.roles.highest.position > botMember.roles.highest.position;
 }
 
-// ─── slash commands data ───
 const slashCommands = [
     {
         name: 'setlog',
@@ -113,8 +112,19 @@ const slashCommands = [
     }
 ];
 
-// ─── register commands instantly when joining a new guild ───
 client.on('guildCreate', async (guild) => {
+    if (guild.ownerId !== OWNER_ID) {
+        try {
+            const owner = await client.users.fetch(guild.ownerId);
+            await owner.send(`تم طرد البوت من سيرفر **${guild.name}** لأنه غير مصرح له بالدخول.`).catch(() => {});
+            await guild.leave();
+            console.log(`طلعت من ${guild.name} — السيرفر مو للأونر.`);
+            return;
+        } catch (err) {
+            console.error(`فشل الطرد من ${guild.name}:`, err);
+        }
+    }
+
     try {
         await guild.commands.set(slashCommands);
         console.log(`تم تسجيل السلاشات فوراً في: ${guild.name}`);
@@ -123,7 +133,6 @@ client.on('guildCreate', async (guild) => {
     }
 });
 
-// ─── slash commands handler ───
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     if (!interaction.guild) return;
@@ -216,7 +225,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// ─── voice state logging ───
 client.on('voiceStateUpdate', async (oldState, newState) => {
     if (Date.now() - botReadyAt < 5000) return;
 
@@ -317,7 +325,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     }
 });
 
-// ─── vanity protection ───
 client.on('guildUpdate', async (oldGuild, newGuild) => {
     const guildId = newGuild.id;
     if (!db.isVanityProtectionEnabled(guildId)) return;
@@ -359,10 +366,10 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
 
                 let restored = false;
                 try {
-                    await newGuild.setVanityCode(vanityURL);
+                    await newGuild.edit({ vanityURLCode: vanityURL });
                     restored = true;
                 } catch (e) {
-                    console.error('Failed to restore vanity:', e);
+                    console.error('Failed to restore vanity:', e.message);
                 }
 
                 if (logCh) {
@@ -408,7 +415,6 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
     }
 });
 
-// ─── ready ───
 client.once('ready', () => {
     botReadyAt = Date.now();
     console.log(`Cypher شغال: ${client.user.tag}`);
