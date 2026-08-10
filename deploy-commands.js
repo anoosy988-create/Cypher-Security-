@@ -15,10 +15,10 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName('afk-voice')
-        .setDescription('تحديد روم AFK الصوتي')
+        .setDescription('يدخل البوت روم الفويس المحدد')
         .addChannelOption(option =>
             option.setName('channel')
-                .setDescription('اختر روم AFK')
+                .setDescription('اختر روم الفويس')
                 .addChannelTypes(ChannelType.GuildVoice)
                 .setRequired(true)
         )
