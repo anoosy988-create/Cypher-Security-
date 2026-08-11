@@ -1,4 +1,6 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
 const {
     Client,
@@ -16,6 +18,7 @@ const db = require('./database');
 // ═══════════════════════════════════════════════════
 
 const OWNER_ID = process.env.OWNER_ID;
+const WARNINGS_FILE = path.join(__dirname, 'warnings.json');
 
 /* ─── HTTP Keep-Alive Server ─── */
 const server = http.createServer((req, res) => {
@@ -32,7 +35,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent, // ← مهم للأوامر التقليدية
+        GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildInvites,
     ]
 });
@@ -60,11 +63,80 @@ function isAdmin(member) {
 }
 
 // ═══════════════════════════════════════════════════
-// ⚠️ Warning System (Global Server Counter)
+// ⚠️ Warning System (Persistent JSON)
 // ═══════════════════════════════════════════════════
 
-const warnings = new Map();
-const guildCounters = new Map();
+let warnings = new Map();
+let guildCounters = new Map();
+
+function loadWarnings() {
+    try {
+        if (!fs.existsSync(WARNINGS_FILE)) {
+            fs.writeFileSync(WARNINGS_FILE, JSON.stringify({ warnings: {}, counters: {} }, null, 2));
+            console.log('[✓] ملف warnings.json ما كان موجود — سويته الآن.');
+            return;
+        }
+
+        const raw = fs.readFileSync(WARNINGS_FILE, 'utf8');
+        if (!raw.trim()) {
+            console.log('[!] ملف warnings.json فارغ.');
+            return;
+        }
+
+        const data = JSON.parse(raw);
+
+        if (data.warnings) {
+            for (const [guildId, guildData] of Object.entries(data.warnings)) {
+                const userMap = new Map();
+                for (const [userId, userWarns] of Object.entries(guildData)) {
+                    userMap.set(userId, userWarns);
+                }
+                warnings.set(guildId, userMap);
+            }
+        }
+
+        if (data.counters) {
+            for (const [guildId, counter] of Object.entries(data.counters)) {
+                guildCounters.set(guildId, counter);
+            }
+        }
+
+        let totalWarns = 0;
+        for (const guildMap of warnings.values()) {
+            for (const userWarns of guildMap.values()) {
+                totalWarns += userWarns.length;
+            }
+        }
+
+        console.log(`[✓] تم تحميل التحذيرات: ${totalWarns} تحذير، ${guildCounters.size} سيرفر.`);
+    } catch (err) {
+        console.error('[✗] خطأ في تحميل التحذيرات:', err.message);
+        warnings = new Map();
+        guildCounters = new Map();
+    }
+}
+
+function saveWarnings() {
+    try {
+        const data = { warnings: {}, counters: {} };
+
+        for (const [guildId, guildMap] of warnings) {
+            data.warnings[guildId] = {};
+            for (const [userId, userWarns] of guildMap) {
+                data.warnings[guildId][userId] = userWarns;
+            }
+        }
+
+        for (const [guildId, counter] of guildCounters) {
+            data.counters[guildId] = counter;
+        }
+
+        fs.writeFileSync(WARNINGS_FILE, JSON.stringify(data, null, 2));
+        console.log('[✓] تم حفظ التحذيرات في الملف.');
+    } catch (err) {
+        console.error('[✗] خطأ في حفظ التحذيرات:', err.message);
+    }
+}
 
 function getWarnings(guildId, userId) {
     if (!warnings.has(guildId)) warnings.set(guildId, new Map());
@@ -89,11 +161,15 @@ function addWarning(guildId, userId, reason, byId) {
         by: byId,
         date: Date.now()
     });
+    saveWarnings();
     return number;
 }
 
+// حمل التحذيرات فوراً
+loadWarnings();
+
 // ═══════════════════════════════════════════════════
-// 📋 Slash Commands (بدون الأوامر التقليدية)
+// 📋 Slash Commands
 // ═══════════════════════════════════════════════════
 
 const slashCommands = [
@@ -241,7 +317,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-/* ─── Prefix Commands Handler (كلام تقليدي) ─── */
+/* ─── Prefix Commands Handler ─── */
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (!message.guild) return;
@@ -252,7 +328,6 @@ client.on('messageCreate', async (message) => {
     const args = content.split(/\s+/);
     const cmd = args[0];
 
-    // كل الأوامر التقليدية تحتاج Administrator
     if (!isAdmin(message.member)) return;
 
     const guildId = message.guild.id;
@@ -318,6 +393,7 @@ client.on('messageCreate', async (message) => {
         }
 
         const warnNumber = addWarning(guildId, target.id, reason, message.author.id);
+        console.log(`[+] تحذير جديد: #${warnNumber} لـ ${target.user.tag} في سيرفر ${guildId}`);
 
         const logCh = getLogChannel(message.guild);
         if (logCh) {
@@ -342,6 +418,7 @@ client.on('messageCreate', async (message) => {
         }
 
         const userWarns = getWarnings(guildId, target.id);
+        console.log(`[i] عرض تحذيرات ${target.user.tag}: ${userWarns.length} تحذير.`);
 
         if (userWarns.length === 0) {
             return message.reply(`✅ <@${target.id}> ما عنده تحذيرات.`).catch(() => {});
