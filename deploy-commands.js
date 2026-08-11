@@ -4,22 +4,11 @@ const { REST, Routes, SlashCommandBuilder, PermissionFlagsBits, ChannelType } = 
 const commands = [
     new SlashCommandBuilder()
         .setName('setlog')
-        .setDescription('تحديد روم لوق الفويسات')
+        .setDescription('تحديد روم لوق الحماية')
         .addChannelOption(option =>
             option.setName('channel')
                 .setDescription('اختر روم اللوق')
                 .addChannelTypes(ChannelType.GuildText)
-                .setRequired(true)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-    new SlashCommandBuilder()
-        .setName('afk-voice')
-        .setDescription('يدخل البوت روم الفويس المحدد')
-        .addChannelOption(option =>
-            option.setName('channel')
-                .setDescription('اختر روم الفويس')
-                .addChannelTypes(ChannelType.GuildVoice)
                 .setRequired(true)
         )
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -40,6 +29,41 @@ const commands = [
         .addBooleanOption(option =>
             option.setName('enabled')
                 .setDescription('تفعيل أو تعطيل')
+                .setRequired(true)
+        )
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+    new SlashCommandBuilder()
+        .setName('ق')
+        .setDescription('قفل الشات (منع الكتابة) — يحتاج Administrator')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+    new SlashCommandBuilder()
+        .setName('ف')
+        .setDescription('فتح الشات — يحتاج Administrator')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+    new SlashCommandBuilder()
+        .setName('تح')
+        .setDescription('إعطاء تحذير لعضو — يحتاج Administrator')
+        .addUserOption(option =>
+            option.setName('member')
+                .setDescription('العضو')
+                .setRequired(true)
+        )
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('سبب التحذير')
+                .setRequired(true)
+        )
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+    new SlashCommandBuilder()
+        .setName('تحذيرات')
+        .setDescription('عرض تحذيرات عضو — يحتاج Administrator')
+        .addUserOption(option =>
+            option.setName('member')
+                .setDescription('العضو')
                 .setRequired(true)
         )
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
