@@ -34,41 +34,6 @@ const commands = [
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     new SlashCommandBuilder()
-        .setName('ق')
-        .setDescription('قفل الشات (منع الكتابة) — يحتاج Administrator')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-    new SlashCommandBuilder()
-        .setName('ف')
-        .setDescription('فتح الشات — يحتاج Administrator')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-    new SlashCommandBuilder()
-        .setName('تح')
-        .setDescription('إعطاء تحذير لعضو — يحتاج Administrator')
-        .addUserOption(option =>
-            option.setName('member')
-                .setDescription('العضو')
-                .setRequired(true)
-        )
-        .addStringOption(option =>
-            option.setName('reason')
-                .setDescription('سبب التحذير')
-                .setRequired(true)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-    new SlashCommandBuilder()
-        .setName('تحذيرات')
-        .setDescription('عرض تحذيرات عضو — يحتاج Administrator')
-        .addUserOption(option =>
-            option.setName('member')
-                .setDescription('العضو')
-                .setRequired(true)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-    new SlashCommandBuilder()
         .setName('settings')
         .setDescription('عرض إعدادات البوت الحالية')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
