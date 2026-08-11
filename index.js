@@ -32,6 +32,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent, // ← مهم للأوامر التقليدية
         GatewayIntentBits.GuildInvites,
     ]
 });
@@ -92,7 +93,7 @@ function addWarning(guildId, userId, reason, byId) {
 }
 
 // ═══════════════════════════════════════════════════
-// 📋 Slash Commands Definition
+// 📋 Slash Commands (بدون الأوامر التقليدية)
 // ═══════════════════════════════════════════════════
 
 const slashCommands = [
@@ -140,52 +141,6 @@ const slashCommands = [
         ]
     },
     {
-        name: 'ق',
-        description: 'قفل الشات (منع الكتابة) — يحتاج Administrator',
-        type: 1,
-        default_member_permissions: '8'
-    },
-    {
-        name: 'ف',
-        description: 'فتح الشات — يحتاج Administrator',
-        type: 1,
-        default_member_permissions: '8'
-    },
-    {
-        name: 'تح',
-        description: 'إعطاء تحذير لعضو — يحتاج Administrator',
-        type: 1,
-        default_member_permissions: '8',
-        options: [
-            {
-                name: 'member',
-                description: 'العضو',
-                type: 6,
-                required: true
-            },
-            {
-                name: 'reason',
-                description: 'سبب التحذير',
-                type: 3,
-                required: true
-            }
-        ]
-    },
-    {
-        name: 'تحذيرات',
-        description: 'عرض تحذيرات عضو — يحتاج Administrator',
-        type: 1,
-        default_member_permissions: '8',
-        options: [
-            {
-                name: 'member',
-                description: 'العضو',
-                type: 6,
-                required: true
-            }
-        ]
-    },
-    {
         name: 'settings',
         description: 'عرض إعدادات البوت الحالية',
         type: 1,
@@ -206,6 +161,7 @@ client.on('guildCreate', async (guild) => {
     }
 });
 
+/* ─── Slash Commands Handler ─── */
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     if (!interaction.guild) {
@@ -219,9 +175,6 @@ client.on('interactionCreate', async (interaction) => {
     const guildId = interaction.guild.id;
     const member = interaction.member;
 
-    // ═══════════════════════════════════════════════
-    // 🔒 كل الأوامر تتطلب صلاحية Administrator
-    // ═══════════════════════════════════════════════
     if (!isAdmin(member)) {
         return interaction.reply({
             content: '❌ هذا الأمر للإدارة فقط (Administrator).',
@@ -268,136 +221,6 @@ client.on('interactionCreate', async (interaction) => {
         }).catch(() => {});
     }
 
-    // ── قفل الشات ──
-    if (commandName === 'ق') {
-        const channel = interaction.channel;
-        try {
-            await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
-                SendMessages: false
-            });
-            
-            const logCh = getLogChannel(interaction.guild);
-            if (logCh) {
-                const embed = logEmbed('🔒 تم قفل الشات', [
-                    { name: '👤 بواسطة', value: `<@${interaction.user.id}>`, inline: true },
-                    { name: '📢 القناة', value: `<#${channel.id}>`, inline: true },
-                ], Colors.Red);
-                await logCh.send({ embeds: [embed] }).catch(() => {});
-            }
-
-            return interaction.reply({
-                content: '🔒 تم قفل الشات بنجاح.',
-                flags: MessageFlags.Ephemeral
-            }).catch(() => {});
-        } catch (err) {
-            console.error('[Lock Error]', err);
-            return interaction.reply({
-                content: '❌ ما قدرت أقفل الشات، تأكد من صلاحياتي.',
-                flags: MessageFlags.Ephemeral
-            }).catch(() => {});
-        }
-    }
-
-    // ── فتح الشات ──
-    if (commandName === 'ف') {
-        const channel = interaction.channel;
-        try {
-            await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
-                SendMessages: true
-            });
-            
-            const logCh = getLogChannel(interaction.guild);
-            if (logCh) {
-                const embed = logEmbed('🔓 تم فتح الشات', [
-                    { name: '👤 بواسطة', value: `<@${interaction.user.id}>`, inline: true },
-                    { name: '📢 القناة', value: `<#${channel.id}>`, inline: true },
-                ], Colors.Green);
-                await logCh.send({ embeds: [embed] }).catch(() => {});
-            }
-
-            return interaction.reply({
-                content: '🔓 تم فتح الشات بنجاح.',
-                flags: MessageFlags.Ephemeral
-            }).catch(() => {});
-        } catch (err) {
-            console.error('[Unlock Error]', err);
-            return interaction.reply({
-                content: '❌ ما قدرت أفتح الشات، تأكد من صلاحياتي.',
-                flags: MessageFlags.Ephemeral
-            }).catch(() => {});
-        }
-    }
-
-    // ── إعطاء تحذير (يحتاج Administrator) ──
-    if (commandName === 'تح') {
-        const target = interaction.options.getMember('member');
-        const reason = interaction.options.getString('reason');
-        
-        if (!target) {
-            return interaction.reply({
-                content: '❌ العضو غير موجود.',
-                flags: MessageFlags.Ephemeral
-            }).catch(() => {});
-        }
-
-        const warnNumber = addWarning(guildId, target.id, reason, interaction.user.id);
-        
-        const logCh = getLogChannel(interaction.guild);
-        if (logCh) {
-            const embed = logEmbed('⚠️ تحذير جديد', [
-                { name: '👤 العضو', value: `<@${target.id}>`, inline: true },
-                { name: '⚡ بواسطة', value: `<@${interaction.user.id}>`, inline: true },
-                { name: '📋 السبب', value: reason, inline: false },
-                { name: '#️⃣ رقم التحذير', value: `#${warnNumber}`, inline: true },
-            ], Colors.Orange);
-            await logCh.send({ embeds: [embed] }).catch(() => {});
-        }
-
-        return interaction.reply({
-            content: `⚠️ تم إعطاء التحذير #${warnNumber} لـ <@${target.id}>\n**السبب:** ${reason}`,
-            flags: MessageFlags.Ephemeral
-        }).catch(() => {});
-    }
-
-    // ── عرض التحذيرات (يحتاج Administrator) ──
-    if (commandName === 'تحذيرات') {
-        const target = interaction.options.getMember('member');
-        if (!target) {
-            return interaction.reply({
-                content: '❌ العضو غير موجود.',
-                flags: MessageFlags.Ephemeral
-            }).catch(() => {});
-        }
-
-        const userWarns = getWarnings(guildId, target.id);
-        
-        if (userWarns.length === 0) {
-            return interaction.reply({
-                content: `✅ <@${target.id}> ما عنده تحذيرات.`,
-                flags: MessageFlags.Ephemeral
-            }).catch(() => {});
-        }
-
-        const fields = userWarns.map(w => ({
-            name: `تحذير #${w.number}`,
-            value: `**السبب:** ${w.reason}\n**بواسطة:** <@${w.by}>\n**التاريخ:** <t:${Math.floor(w.date / 1000)}:R>`,
-            inline: false
-        }));
-
-        const embed = new EmbedBuilder()
-            .setTitle(`⚠️ تحذيرات ${target.user.tag}`)
-            .setDescription(`عدد التحذيرات: ${userWarns.length}`)
-            .addFields(fields)
-            .setColor(Colors.Orange)
-            .setThumbnail(target.user.displayAvatarURL({ dynamic: true }))
-            .setTimestamp();
-
-        return interaction.reply({
-            embeds: [embed],
-            flags: MessageFlags.Ephemeral
-        }).catch(() => {});
-    }
-
     if (commandName === 'settings') {
         const logChId = db.getLogChannel(guildId);
         const logCh = logChId ? `<#${logChId}>` : 'غير محدد';
@@ -415,6 +238,131 @@ client.on('interactionCreate', async (interaction) => {
             .setTimestamp();
 
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+});
+
+/* ─── Prefix Commands Handler (كلام تقليدي) ─── */
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+
+    const content = message.content.trim();
+    if (!content) return;
+
+    const args = content.split(/\s+/);
+    const cmd = args[0];
+
+    // كل الأوامر التقليدية تحتاج Administrator
+    if (!isAdmin(message.member)) return;
+
+    const guildId = message.guild.id;
+
+    // ── ق: قفل الشات ──
+    if (cmd === 'ق') {
+        try {
+            await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
+                SendMessages: false
+            });
+
+            const logCh = getLogChannel(message.guild);
+            if (logCh) {
+                const embed = logEmbed('🔒 تم قفل الشات', [
+                    { name: '👤 بواسطة', value: `<@${message.author.id}>`, inline: true },
+                    { name: '📢 القناة', value: `<#${message.channel.id}>`, inline: true },
+                ], Colors.Red);
+                await logCh.send({ embeds: [embed] }).catch(() => {});
+            }
+
+            await message.reply('🔒 تم قفل الشات بنجاح.').catch(() => {});
+        } catch (err) {
+            console.error('[Lock Error]', err);
+            await message.reply('❌ ما قدرت أقفل الشات، تأكد من صلاحياتي.').catch(() => {});
+        }
+        return;
+    }
+
+    // ── ف: فتح الشات ──
+    if (cmd === 'ف') {
+        try {
+            await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
+                SendMessages: true
+            });
+
+            const logCh = getLogChannel(message.guild);
+            if (logCh) {
+                const embed = logEmbed('🔓 تم فتح الشات', [
+                    { name: '👤 بواسطة', value: `<@${message.author.id}>`, inline: true },
+                    { name: '📢 القناة', value: `<#${message.channel.id}>`, inline: true },
+                ], Colors.Green);
+                await logCh.send({ embeds: [embed] }).catch(() => {});
+            }
+
+            await message.reply('🔓 تم فتح الشات بنجاح.').catch(() => {});
+        } catch (err) {
+            console.error('[Unlock Error]', err);
+            await message.reply('❌ ما قدرت أفتح الشات، تأكد من صلاحياتي.').catch(() => {});
+        }
+        return;
+    }
+
+    // ── تح: إعطاء تحذير ──
+    if (cmd === 'تح') {
+        const target = message.mentions.members.first();
+        if (!target) {
+            return message.reply('❌ استخدم: `تح @العضو السبب`').catch(() => {});
+        }
+
+        const reason = args.slice(2).join(' ');
+        if (!reason) {
+            return message.reply('❌ اكتب سبب التحذير. استخدم: `تح @العضو السبب`').catch(() => {});
+        }
+
+        const warnNumber = addWarning(guildId, target.id, reason, message.author.id);
+
+        const logCh = getLogChannel(message.guild);
+        if (logCh) {
+            const embed = logEmbed('⚠️ تحذير جديد', [
+                { name: '👤 العضو', value: `<@${target.id}>`, inline: true },
+                { name: '⚡ بواسطة', value: `<@${message.author.id}>`, inline: true },
+                { name: '📋 السبب', value: reason, inline: false },
+                { name: '#️⃣ رقم التحذير', value: `#${warnNumber}`, inline: true },
+            ], Colors.Orange);
+            await logCh.send({ embeds: [embed] }).catch(() => {});
+        }
+
+        await message.reply(`⚠️ تم إعطاء التحذير #${warnNumber} لـ <@${target.id}>\n**السبب:** ${reason}`).catch(() => {});
+        return;
+    }
+
+    // ── تحذيرات: عرض تحذيرات العضو ──
+    if (cmd === 'تحذيرات') {
+        const target = message.mentions.members.first();
+        if (!target) {
+            return message.reply('❌ استخدم: `تحذيرات @العضو`').catch(() => {});
+        }
+
+        const userWarns = getWarnings(guildId, target.id);
+
+        if (userWarns.length === 0) {
+            return message.reply(`✅ <@${target.id}> ما عنده تحذيرات.`).catch(() => {});
+        }
+
+        const fields = userWarns.map(w => ({
+            name: `تحذير #${w.number}`,
+            value: `**السبب:** ${w.reason}\n**بواسطة:** <@${w.by}>\n**التاريخ:** <t:${Math.floor(w.date / 1000)}:R>`,
+            inline: false
+        }));
+
+        const embed = new EmbedBuilder()
+            .setTitle(`⚠️ تحذيرات ${target.user.tag}`)
+            .setDescription(`عدد التحذيرات: ${userWarns.length}`)
+            .addFields(fields)
+            .setColor(Colors.Orange)
+            .setThumbnail(target.user.displayAvatarURL({ dynamic: true }))
+            .setTimestamp();
+
+        await message.reply({ embeds: [embed] }).catch(() => {});
+        return;
     }
 });
 
