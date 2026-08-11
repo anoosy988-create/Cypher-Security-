@@ -97,6 +97,11 @@ async function addWarning(guildId, userId, reason, byId) {
     return number;
 }
 
+async function removeWarning(guildId, userId, number) {
+    const result = await Warn.deleteOne({ guildId, userId, number });
+    return result.deletedCount > 0;
+}
+
 /* ─── Slash Commands ─── */
 const slashCommands = [
     {
@@ -197,7 +202,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-/* ─── Prefix Commands ─── */
+/* ─── Prefix Commands (كلام تقليدي) ─── */
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
@@ -207,6 +212,7 @@ client.on('messageCreate', async (message) => {
 
     const guildId = message.guild.id;
 
+    // ── ق: قفل الشات ──
     if (cmd === 'ق') {
         try {
             await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
@@ -224,6 +230,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
+    // ── ف: فتح الشات ──
     if (cmd === 'ف') {
         try {
             await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
@@ -241,6 +248,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
+    // ── تح: إعطاء تحذير ──
     if (cmd === 'تح') {
         const target = message.mentions.members.first();
         if (!target) return message.reply('❌ استخدم: `تح @العضو السبب`').catch(() => {});
@@ -266,6 +274,47 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
+    // ── شيل: إزالة تحذير ──
+    if (cmd === 'شيل') {
+        const target = message.mentions.members.first();
+        if (!target) {
+            return message.reply('❌ استخدم: `شيل @العضو #رقم`\nمثال: `شيل @Anas #2`').catch(() => {});
+        }
+
+        const numArg = args.find(a => a.startsWith('#'));
+        if (!numArg) {
+            return message.reply('❌ حدد رقم التحذير مثلاً: `#2`\nاستخدم: `شيل @العضو #رقم`').catch(() => {});
+        }
+
+        const number = parseInt(numArg.replace('#', ''));
+        if (isNaN(number) || number < 1) {
+            return message.reply('❌ الرقم غير صحيح. استخدم رقم صحيح مثل `#2`.').catch(() => {});
+        }
+
+        try {
+            const deleted = await removeWarning(guildId, target.id, number);
+            if (!deleted) {
+                return message.reply(`⚠️ ما لقيت تحذير رقم **#${number}** لـ <@${target.id}>.`).catch(() => {});
+            }
+
+            const logCh = getLogChannel(message.guild);
+            if (logCh) {
+                await logCh.send({ embeds: [logEmbed('🗑️ تم إزالة تحذير', [
+                    { name: '👤 العضو', value: `<@${target.id}>`, inline: true },
+                    { name: '⚡ بواسطة', value: `<@${message.author.id}>`, inline: true },
+                    { name: '#️⃣ الرقم المحذوف', value: `#${number}`, inline: true },
+                ], Colors.Purple)] }).catch(() => {});
+            }
+
+            await message.reply(`🗑️ تم إزالة التحذير **#${number}** من <@${target.id}>.`).catch(() => {});
+        } catch (err) {
+            console.error('[Remove Warn Error]', err);
+            await message.reply('❌ حصل خطأ في إزالة التحذير.').catch(() => {});
+        }
+        return;
+    }
+
+    // ── تحذيرات: عرض تحذيرات العضو ──
     if (cmd === 'تحذيرات') {
         const target = message.mentions.members.first();
         if (!target) return message.reply('❌ استخدم: `تحذيرات @العضو`').catch(() => {});
