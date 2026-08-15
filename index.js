@@ -345,7 +345,7 @@ client.on('messageCreate', async (message) => {
 });
 
 /* ═══════════════════════════════════════
-   VANITY PROTECTION — نهائي مُصلح بالكامل
+   VANITY PROTECTION — نهائي مُصلح
    ═══════════════════════════════════════ */
 
 const vanityState = new Map();
@@ -353,8 +353,6 @@ const vanityState = new Map();
 // ── الحدث الرئيسي (الاكتشاف الفوري) ──
 client.on('guildUpdate', async (oldGuild, newGuild) => {
     const guildId = newGuild.id;
-    
-    // تحقق من الإعدادات
     const enabled = db.isVanityProtectionEnabled(guildId);
     const savedURL = db.getVanityURL(guildId);
     
@@ -367,7 +365,6 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
     
     console.log(`[Vanity] Change: ${oldVanity} → ${newVanity}`);
     
-    // لو ما تغيّر أو رجع للأصلي، تجاهل
     if (oldVanity === newVanity) return;
     if (newVanity === savedURL) return;
     
@@ -392,7 +389,6 @@ client.once('ready', () => {
                     await handleVanityChange(guild, savedURL, vanity.code);
                 }
             } catch (err) {
-                // 404 = الرابط محذوف
                 if (err.code === 10006 || err.status === 404) {
                     console.log(`[Vanity Polling] ${guild.name}: Vanity deleted!`);
                     await handleVanityChange(guild, savedURL, null);
@@ -406,7 +402,6 @@ client.once('ready', () => {
 async function handleVanityChange(guild, targetURL, currentCode) {
     const guildId = guild.id;
     
-    // منع التكرار
     if (vanityState.get(guildId)?.checking) {
         console.log(`[Vanity] Skipping ${guild.name} (already handling)`);
         return;
@@ -436,8 +431,8 @@ async function handleVanityChange(guild, targetURL, currentCode) {
             .setTitle('🚨 رابط السيرفر تغيّر!')
             .addFields(
                 { name: '👤 المُنفّذ', value: executor ? `<@${executor.id}> (${executor.tag})` : 'غير معروف', inline: true },
-                { name: '🔗 الرابط الحالي', value: currentCode ? `discord.gg/${currentCode}` : 'تم الحذف', inline: true },
-                { name: '🔗 الرابط المطلوب', value: `discord.gg/${targetURL}`, inline: true }
+                { name: '🔗 الحالي', value: currentCode ? `discord.gg/${currentCode}` : 'محذوف', inline: true },
+                { name: '🔗 المطلوب', value: `discord.gg/${targetURL}`, inline: true }
             )
             .setColor(Colors.Orange)
             .setTimestamp()] }).catch(() => {});
@@ -449,30 +444,25 @@ async function handleVanityChange(guild, targetURL, currentCode) {
         try {
             console.log(`[Vanity] Restore attempt ${i}/5 for ${guild.name}`);
             await guild.edit({ vanityURLCode: targetURL });
-            
-            // تحقق من Discord API
-            await new Promise(r => setTimeout(r, 2000));
-            const verify = await guild.fetchVanityData().catch(() => null);
-            
-            if (verify && verify.code === targetURL) {
-                restored = true;
-                console.log(`[Vanity] ✅ Verified restored!`);
-                break;
-            } else {
-                console.log(`[Vanity] ⚠️ Attempt ${i} code mismatch, retrying...`);
-            }
+            restored = true;
+            console.log(`[Vanity] ✅ API accepted attempt ${i}!`);
+            break;
         } catch (err) {
             console.error(`[Vanity] ❌ Attempt ${i} failed:`, err.message);
-            if (i < 5) await new Promise(r => setTimeout(r, i * 2000));
+            if (i < 5) {
+                const delay = i * 5000; // 5s, 10s, 15s, 20s
+                console.log(`[Vanity] Waiting ${delay}ms before retry...`);
+                await new Promise(r => setTimeout(r, delay));
+            }
         }
     }
     
     // ── لوق الإرجاع ──
     if (logCh) {
         await logCh.send({ embeds: [new EmbedBuilder()
-            .setTitle(restored ? '✅ تم إرجاع الرابط وتم التحقق' : '❌ فشل الإرجاع نهائياً')
+            .setTitle(restored ? '✅ تم إرجاع الرابط' : '❌ فشل الإرجاع نهائياً')
             .setDescription(restored 
-                ? `discord.gg/${targetURL} (تم التحقق من Discord API)` 
+                ? `discord.gg/${targetURL}` 
                 : 'تأكد من:\n• صلاحية Manage Server\n• الرابط غير محجوز\n• السيرفر يملك Boost Level 3')
             .setColor(restored ? Colors.Green : Colors.Red)
             .setTimestamp()] }).catch(() => {});
