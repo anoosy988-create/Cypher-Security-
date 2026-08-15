@@ -48,12 +48,13 @@ function getLogChannel(guild) {
 }
 
 function logEmbed(title, fields, color = Colors.Blue) {
+    const icon = client.user ? client.user.displayAvatarURL() : undefined;
     return new EmbedBuilder()
         .setTitle(title)
         .addFields(fields)
         .setColor(color)
         .setTimestamp()
-        .setFooter({ text: 'Cypher Protection System', iconURL: client.user?.displayAvatarURL?.() || undefined });
+        .setFooter({ text: 'Cypher Protection System', iconURL: icon });
 }
 
 function isAdmin(member) {
@@ -344,7 +345,7 @@ client.on('messageCreate', async (message) => {
 });
 
 /* ═══════════════════════════════════════
-   VANITY PROTECTION — نسخة نهائية مُصلحة
+   VANITY PROTECTION — نهائي مُصلح
    ═══════════════════════════════════════ */
 
 const vanityState = new Map();
@@ -357,22 +358,18 @@ async function checkVanity(guild) {
     if (!savedURL) return;
 
     let currentCode = null;
-    let vanityData = null;
-
-    // ── جلب الرابط الحالي (مع التعامل مع الحذف) ──
     try {
-        vanityData = await guild.fetchVanityData();
-        currentCode = vanityData.code;
+        const vanity = await guild.fetchVanityData();
+        currentCode = vanity.code;
     } catch (err) {
-        if (err.code === 10006 || err.status === 404) {
-            currentCode = null; // الرابط محذوف
+        if (err.code === 10006 || err.status === 404 || err.message?.includes(' vanity')) {
+            currentCode = null;
         } else {
-            console.error(`[Vanity] fetchVanityData error in ${guild.name}:`, err.message);
+            console.error(`[Vanity] fetch error in ${guild.name}:`, err.message);
             return;
         }
     }
 
-    // ── لو الرابط محذوف أو مغيّر ──
     if (currentCode !== savedURL) {
         console.log(`[Vanity] ALERT ${guild.name}: saved=${savedURL}, current=${currentCode}`);
         await handleVanityChange(guild, savedURL, currentCode);
@@ -383,15 +380,12 @@ async function checkVanity(guild) {
 
 async function handleVanityChange(guild, targetURL, currentCode) {
     const guildId = guild.id;
-
-    // منع التكرار
     if (vanityState.get(guildId)?.checking) return;
     vanityState.set(guildId, { lastCode: currentCode, checking: true });
 
     const logCh = getLogChannel(guild);
     let executor = null;
 
-    // ── Audit Log ──
     try {
         const audit = await guild.fetchAuditLogs({ type: AuditLogEvent.GuildUpdate, limit: 5 });
         const entry = audit.entries.find(e =>
@@ -403,7 +397,6 @@ async function handleVanityChange(guild, targetURL, currentCode) {
         console.error('[Audit Log]', e.message);
     }
 
-    // ── لوق التنبيه ──
     if (logCh) {
         await logCh.send({ embeds: [new EmbedBuilder()
             .setTitle('🚨 رابط السيرفر تغيّر!')
@@ -416,14 +409,11 @@ async function handleVanityChange(guild, targetURL, currentCode) {
             .setTimestamp()] }).catch(() => {});
     }
 
-    // ── إرجاع الرابط (5 محاولات) ──
     let restored = false;
     for (let i = 1; i <= 5; i++) {
         try {
             console.log(`[Vanity] Attempt ${i}/5 → ${guild.name}`);
             await guild.edit({ vanityURLCode: targetURL });
-
-            // تحقق
             await new Promise(r => setTimeout(r, 2000));
             const verify = await guild.fetchVanityData().catch(() => null);
             if (verify && verify.code === targetURL) {
@@ -437,7 +427,6 @@ async function handleVanityChange(guild, targetURL, currentCode) {
         }
     }
 
-    // ── لوق الإرجاع ──
     if (logCh) {
         await logCh.send({ embeds: [new EmbedBuilder()
             .setTitle(restored ? '✅ تم الإرجاع' : '❌ فشل الإرجاع')
@@ -446,7 +435,6 @@ async function handleVanityChange(guild, targetURL, currentCode) {
             .setTimestamp()] }).catch(() => {});
     }
 
-    // ── باند ──
     if (executor && executor.id !== OWNER_ID) {
         let banned = false;
         for (let i = 1; i <= 2; i++) {
@@ -474,7 +462,6 @@ async function handleVanityChange(guild, targetURL, currentCode) {
     vanityState.set(guildId, { lastCode: targetURL, checking: false });
 }
 
-/* ─── Polling يبدأ بعد ما البوت يصير جاهز ─── */
 client.once('ready', () => {
     console.log('═══════════════════════════════════════════');
     console.log(`  ⚡ Cypher is online: ${client.user.tag}`);
@@ -483,20 +470,16 @@ client.once('ready', () => {
     console.log('═══════════════════════════════════════════');
     client.user.setActivity('Cypher Protection', { type: 4 });
 
-    // ── فحص أولي ──
     client.guilds.cache.forEach(g => checkVanity(g));
 
-    // ── فحص كل 3 ثواني ──
     setInterval(() => {
         client.guilds.cache.forEach(g => checkVanity(g));
     }, 3000);
 });
 
-/* ─── Event احتياطي ── */
 client.on('guildUpdate', async (oldGuild, newGuild) => {
     if (!db.isVanityProtectionEnabled(newGuild.id)) return;
     if (oldGuild.vanityURLCode === newGuild.vanityURLCode) return;
-
     console.log(`[Vanity Event] ${newGuild.name}: ${oldGuild.vanityURLCode} → ${newGuild.vanityURLCode}`);
     await checkVanity(newGuild);
 });
