@@ -178,10 +178,45 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `✅ تم تحديد رابط السيرفر: discord.gg/${url}`, flags: MessageFlags.Ephemeral }).catch(() => {});
     }
 
+    /* ═══════════════════════════════════════
+       تفعيل الحماية يحفظ الرابط الحالي تلقائيًا
+       كـ baseline لو ما فيه رابط محفوظ أصلاً —
+       بدون هذا، الحماية تفعّل بس ما تسوي شي أبدًا
+       لأن checkVanity/guildUpdate يطلعون فورًا
+       إذا savedURL فاضي.
+       ═══════════════════════════════════════ */
     if (commandName === 'vanity-protect') {
         const on = interaction.options.getBoolean('enabled');
+
+        if (on) {
+            const existingSaved = db.getVanityURL(guildId);
+            if (!existingSaved) {
+                try {
+                    const vanity = await interaction.guild.fetchVanityData();
+                    if (!vanity.code) {
+                        return interaction.reply({
+                            content: '❌ السيرفر ما عنده رابط مخصص (Custom Invite Link) حاليًا. حدد رابط أول بـ `/setvanity` أو فعّله من إعدادات السيرفر.',
+                            flags: MessageFlags.Ephemeral
+                        }).catch(() => {});
+                    }
+                    db.setVanityURL(guildId, vanity.code);
+                } catch (err) {
+                    return interaction.reply({
+                        content: `❌ ما قدرت أوصل لبيانات الرابط: ${err.message}\nتأكد إن صلاحية Manage Server موجودة للبوت.`,
+                        flags: MessageFlags.Ephemeral
+                    }).catch(() => {});
+                }
+            }
+        }
+
         db.toggleVanityProtection(guildId, on);
-        return interaction.reply({ content: on ? '✅ حماية الرابط مفعلة.' : '⚠️ معطلة.', flags: MessageFlags.Ephemeral }).catch(() => {});
+        const savedNow = db.getVanityURL(guildId);
+        return interaction.reply({
+            content: on
+                ? `✅ حماية الرابط مفعلة. الرابط المحمي: discord.gg/${savedNow}`
+                : '⚠️ معطلة.',
+            flags: MessageFlags.Ephemeral
+        }).catch(() => {});
     }
 
     if (commandName === 'settings') {
@@ -345,7 +380,7 @@ client.on('messageCreate', async (message) => {
 });
 
 /* ═══════════════════════════════════════
-   VANITY PROTECTION — نهائي مُصلح
+   VANITY PROTECTION — حظر فوري + إرجاع موثوق
    ═══════════════════════════════════════ */
 
 const vanityState = new Map();
@@ -353,67 +388,74 @@ const vanityState = new Map();
 // ── الحدث الرئيسي (الاكتشاف الفوري) ──
 client.on('guildUpdate', async (oldGuild, newGuild) => {
     const guildId = newGuild.id;
+
     const enabled = db.isVanityProtectionEnabled(guildId);
     const savedURL = db.getVanityURL(guildId);
-    
-    console.log(`[Vanity] Event: ${newGuild.name} | enabled=${enabled} | saved=${savedURL}`);
-    
-    if (!enabled || !savedURL) return;
-    
+
+    if (!enabled) return;
+    if (!savedURL) {
+        console.warn(`[Vanity] Protection ON but no saved URL for ${newGuild.name} — run /vanity-protect true again`);
+        return;
+    }
+
     const oldVanity = oldGuild.vanityURLCode;
     const newVanity = newGuild.vanityURLCode;
-    
-    console.log(`[Vanity] Change: ${oldVanity} → ${newVanity}`);
-    
-    if (oldVanity === newVanity) return;
-    if (newVanity === savedURL) return;
-    
-    console.log(`[Vanity] 🚨 ALERT! Current=${newVanity}, Saved=${savedURL}`);
-    await handleVanityChange(newGuild, savedURL, newVanity);
+
+    if (oldVanity === newVanity) return;   // ما تغيّر شي فعلي
+    if (newVanity === savedURL) return;    // رجع هو نفسه للمطلوب
+
+    console.log(`[Vanity Event] ${newGuild.name}: ${oldVanity} → ${newVanity}`);
+    handleVanityChange(newGuild, savedURL, newVanity); // بدون await — ما نعطّل الـ event loop
 });
 
-// ── Polling احتياطي كل 5 ثواني ──
+// ── Polling احتياطي كل ثانيتين (يغطي أي حالة ما وصلها حدث guildUpdate) ──
 client.once('ready', () => {
     console.log('[Vanity] Polling backup started');
-    
+
     setInterval(() => {
         client.guilds.cache.forEach(async (guild) => {
             const enabled = db.isVanityProtectionEnabled(guild.id);
             const savedURL = db.getVanityURL(guild.id);
             if (!enabled || !savedURL) return;
-            
+            if (vanityState.get(guild.id)?.checking) return; // فيه معالجة شغالة أصلاً
+
             try {
                 const vanity = await guild.fetchVanityData();
                 if (vanity.code !== savedURL) {
                     console.log(`[Vanity Polling] ALERT ${guild.name}: ${vanity.code} !== ${savedURL}`);
-                    await handleVanityChange(guild, savedURL, vanity.code);
+                    handleVanityChange(guild, savedURL, vanity.code);
                 }
             } catch (err) {
                 if (err.code === 10006 || err.status === 404) {
                     console.log(`[Vanity Polling] ${guild.name}: Vanity deleted!`);
-                    await handleVanityChange(guild, savedURL, null);
+                    handleVanityChange(guild, savedURL, null);
                 }
             }
         });
-    }, 5000);
+    }, 2000);
 });
 
-// ── المعالج الرئيسي ──
+/* ═══════════════════════════════════════
+   المعالج الرئيسي — الحظر والإرجاع يصيرون
+   بالتوازي (Promise.all)، مو الواحد بعد الثاني.
+   هذا يخلي الحظر فوري بغض النظر عن كم
+   محاولة يحتاجها إرجاع الرابط.
+   ═══════════════════════════════════════ */
 async function handleVanityChange(guild, targetURL, currentCode) {
     const guildId = guild.id;
-    
+
     if (vanityState.get(guildId)?.checking) {
         console.log(`[Vanity] Skipping ${guild.name} (already handling)`);
         return;
     }
-    vanityState.set(guildId, { lastCode: currentCode, checking: true });
-    
+    vanityState.set(guildId, { checking: true });
+
     console.log(`[Vanity] Handling change for ${guild.name}`);
-    
+
     const logCh = getLogChannel(guild);
     let executor = null;
-    
-    // ── جلب المُنفّذ ──
+
+    // ── جلب المُنفّذ من الأودت لوق (نحتاجه فورًا عشان الحظر) ──
     try {
         const audit = await guild.fetchAuditLogs({ type: AuditLogEvent.GuildUpdate, limit: 5 });
         const entry = audit.entries.find(e =>
@@ -424,89 +466,96 @@ async function handleVanityChange(guild, targetURL, currentCode) {
     } catch (e) {
         console.error('[Audit Log]', e.message);
     }
-    
-    // ── لوق التنبيه ──
+
+    // ── لوق التنبيه الفوري ──
     if (logCh) {
-        await logCh.send({ embeds: [new EmbedBuilder()
+        logCh.send({ embeds: [new EmbedBuilder()
             .setTitle('🚨 رابط السيرفر تغيّر!')
             .addFields(
                 { name: '👤 المُنفّذ', value: executor ? `<@${executor.id}> (${executor.tag})` : 'غير معروف', inline: true },
-                { name: '🔗 الحالي', value: currentCode ? `discord.gg/${currentCode}` : 'محذوف', inline: true },
-                { name: '🔗 المطلوب', value: `discord.gg/${targetURL}`, inline: true }
+                { name: '🔗 الرابط الحالي', value: currentCode ? `discord.gg/${currentCode}` : 'تم الحذف', inline: true },
+                { name: '🔗 الرابط المطلوب', value: `discord.gg/${targetURL}`, inline: true }
             )
             .setColor(Colors.Orange)
             .setTimestamp()] }).catch(() => {});
     }
-    
-    // ── إرجاع الرابط (5 محاولات) ──
-    let restored = false;
-    for (let i = 1; i <= 5; i++) {
+
+    /* ── المسار ١: الحظر — فوري، ما ينتظر نتيجة الإرجاع ── */
+    const banPromise = (async () => {
+        if (!executor) return { skipped: 'unknown' };
+        if (executor.id === OWNER_ID) return { skipped: 'owner' };
         try {
-            console.log(`[Vanity] Restore attempt ${i}/5 for ${guild.name}`);
-            await guild.edit({ vanityURLCode: targetURL });
-            restored = true;
-            console.log(`[Vanity] ✅ API accepted attempt ${i}!`);
-            break;
+            const member = await guild.members.fetch(executor.id).catch(() => null);
+            if (!member) return { ok: false, reason: 'العضو غير موجود بالسيرفر (طلع بنفسه؟).' };
+            await member.ban({ reason: '🛡️ حماية الرابط - تغيير الاختصار' });
+            console.log(`[Vanity] 🔨 Banned ${executor.tag}`);
+            return { ok: true };
         } catch (err) {
-            console.error(`[Vanity] ❌ Attempt ${i} failed:`, err.message);
-            if (i < 5) {
-                const delay = i * 5000; // 5s, 10s, 15s, 20s
-                console.log(`[Vanity] Waiting ${delay}ms before retry...`);
-                await new Promise(r => setTimeout(r, delay));
-            }
+            console.error('[Vanity] Ban failed:', err.message);
+            let reason = err.message;
+            if (err.code === 50013) reason = 'صلاحيات ناقصة أو رتبة البوت أوطى من العضو.';
+            return { ok: false, reason };
         }
-    }
-    
-    // ── لوق الإرجاع ──
-    if (logCh) {
-        await logCh.send({ embeds: [new EmbedBuilder()
-            .setTitle(restored ? '✅ تم إرجاع الرابط' : '❌ فشل الإرجاع نهائياً')
-            .setDescription(restored 
-                ? `discord.gg/${targetURL}` 
-                : 'تأكد من:\n• صلاحية Manage Server\n• الرابط غير محجوز\n• السيرفر يملك Boost Level 3')
-            .setColor(restored ? Colors.Green : Colors.Red)
-            .setTimestamp()] }).catch(() => {});
-    }
-    
-    // ── باند المُنفّذ ──
-    if (executor && executor.id !== OWNER_ID) {
-        let banned = false;
-        for (let i = 1; i <= 2; i++) {
+    })();
+
+    /* ── المسار ٢: إرجاع الرابط — يشتغل بالتوازي، بمحاولات كافية وتشخيص واضح ── */
+    const restorePromise = (async () => {
+        const me = guild.members.me;
+        if (!me || !me.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+            return { ok: false, reason: 'البوت ما عنده صلاحية "Manage Server" — أضفها من إعدادات الرتبة.' };
+        }
+
+        let lastErr = null;
+        for (let i = 1; i <= 5; i++) {
             try {
-                const member = await guild.members.fetch(executor.id).catch(() => null);
-                if (!member) break;
-                
-                await member.ban({ reason: '🛡️ حماية الرابط - تغيير الاختصار' });
-                banned = true;
-                console.log(`[Vanity] 🔨 Banned ${executor.tag}`);
-                break;
+                console.log(`[Vanity] Restore attempt ${i}/5 for ${guild.name}`);
+                await guild.edit({ vanityURLCode: targetURL });
+                return { ok: true };
             } catch (err) {
-                console.error(`[Vanity] Ban attempt ${i} failed:`, err.message);
-                if (i < 2) await new Promise(r => setTimeout(r, 3000));
+                lastErr = err;
+                console.error(`[Vanity] Restore attempt ${i} failed:`, err.message);
+                if (i < 5) await new Promise(r => setTimeout(r, i * 1000));
             }
         }
 
-        if (logCh) {
-            await logCh.send({ embeds: [new EmbedBuilder()
-                .setTitle(banned ? '🔨 تم الحظر' : '⚠️ فشل الحظر')
-                .setDescription(banned 
-                    ? `<@${executor.id}> تم الحظر نهائياً.` 
-                    : 'تحقق من ترتيب الرتب (يجب أن تكون رتبة البوت أعلى).')
-                .setColor(banned ? Colors.Red : Colors.DarkOrange)
-                .setTimestamp()] }).catch(() => {});
+        let reason = lastErr?.message || 'خطأ غير معروف';
+        if (lastErr?.status === 429 || lastErr?.code === 20028) {
+            reason = 'محدود مؤقتًا من ديسكورد (Rate Limit) — جرب `/setvanity` يدويًا بعد شوي.';
+        } else if (lastErr?.code === 50013) {
+            reason = 'صلاحيات ناقصة (Missing Permissions).';
+        } else if (lastErr?.code === 50035 || lastErr?.message?.includes('taken')) {
+            reason = `الرابط discord.gg/${targetURL} مو متاح حاليًا (ممكن مأخوذ من سيرفر ثاني).`;
         }
-    } else if (executor?.id === OWNER_ID) {
-        console.log('[Vanity] Owner was executor, skipped ban.');
-        if (logCh) {
-            await logCh.send({ embeds: [new EmbedBuilder()
+        return { ok: false, reason };
+    })();
+
+    const [banResult, restoreResult] = await Promise.all([banPromise, restorePromise]);
+
+    // ── لوق نتيجة الإرجاع ──
+    if (logCh) {
+        logCh.send({ embeds: [new EmbedBuilder()
+            .setTitle(restoreResult.ok ? '✅ تم إرجاع الرابط' : '❌ فشل الإرجاع')
+            .setDescription(restoreResult.ok ? `discord.gg/${targetURL}` : (restoreResult.reason || 'تحقق من الصلاحيات ومستوى البوست'))
+            .setColor(restoreResult.ok ? Colors.Green : Colors.Red)
+            .setTimestamp()] }).catch(() => {});
+
+        // ── لوق نتيجة الحظر ──
+        if (banResult.skipped === 'owner') {
+            logCh.send({ embeds: [new EmbedBuilder()
                 .setTitle('👑 Owner تجاوز الحظر')
                 .setDescription('مالك السيرفر هو من غيّر الرابط، تم الإرجاع بدون حظر.')
                 .setColor(Colors.Blue)
                 .setTimestamp()] }).catch(() => {});
+        } else if (banResult.skipped !== 'unknown') {
+            logCh.send({ embeds: [new EmbedBuilder()
+                .setTitle(banResult.ok ? '🔨 تم الحظر' : '⚠️ فشل الحظر')
+                .setDescription(banResult.ok ? `<@${executor.id}> تم الحظر.` : (banResult.reason || 'تحقق من رتبة البوت.'))
+                .setColor(banResult.ok ? Colors.Red : Colors.DarkOrange)
+                .setTimestamp()] }).catch(() => {});
         }
     }
-    
-    vanityState.set(guildId, { lastCode: targetURL, checking: false });
+
+    vanityState.set(guildId, { checking: false });
 }
 
 client.once('ready', () => {
