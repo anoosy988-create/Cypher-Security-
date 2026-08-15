@@ -510,13 +510,25 @@ async function handleVanityChange(guild, targetURL, currentCode) {
             try {
                 console.log(`[Vanity] Restore attempt ${i}/5 for ${guild.name}`);
                 await guild.edit({ vanityURLCode: targetURL });
-                return { ok: true };
+
+                // تحقق فعلي — ما نصدّق نجاح الطلب لحاله، نتأكد إن الرابط الحي فعلاً تغيّر
+                await new Promise(r => setTimeout(r, 700));
+                const verify = await guild.fetchVanityData().catch(() => null);
+
+                if (verify && verify.code === targetURL) {
+                    return { ok: true };
+                }
+                console.log(`[Vanity] Attempt ${i}: edit() نجح لكن التحقق فشل (الحالي: ${verify?.code ?? 'غير معروف'})`);
+                lastErr = { message: `edit() نجح لكن الرابط الفعلي بقي: ${verify?.code ?? 'غير معروف'}` };
             } catch (err) {
                 lastErr = err;
                 console.error(`[Vanity] Restore attempt ${i} failed:`, err.message);
-                if (i < 5) await new Promise(r => setTimeout(r, i * 1000));
             }
+            if (i < 5) await new Promise(r => setTimeout(r, i * 1000));
         }
+
+        // آخر قراءة حقيقية للرابط عشان نعرض الحالة الصحيحة باللوق حتى لو فشلنا
+        const finalCheck = await guild.fetchVanityData().catch(() => null);
 
         let reason = lastErr?.message || 'خطأ غير معروف';
         if (lastErr?.status === 429 || lastErr?.code === 20028) {
@@ -526,16 +538,18 @@ async function handleVanityChange(guild, targetURL, currentCode) {
         } else if (lastErr?.code === 50035 || lastErr?.message?.includes('taken')) {
             reason = `الرابط discord.gg/${targetURL} مو متاح حاليًا (ممكن مأخوذ من سيرفر ثاني).`;
         }
-        return { ok: false, reason };
+        return { ok: false, reason, currentCode: finalCheck?.code ?? null };
     })();
 
     const [banResult, restoreResult] = await Promise.all([banPromise, restorePromise]);
 
-    // ── لوق نتيجة الإرجاع ──
+    // ── لوق نتيجة الإرجاع (بناءً على تحقق فعلي مو افتراض) ──
     if (logCh) {
         logCh.send({ embeds: [new EmbedBuilder()
-            .setTitle(restoreResult.ok ? '✅ تم إرجاع الرابط' : '❌ فشل الإرجاع')
-            .setDescription(restoreResult.ok ? `discord.gg/${targetURL}` : (restoreResult.reason || 'تحقق من الصلاحيات ومستوى البوست'))
+            .setTitle(restoreResult.ok ? '✅ تم إرجاع الرابط (تم التحقق)' : '❌ فشل الإرجاع')
+            .setDescription(restoreResult.ok
+                ? `discord.gg/${targetURL}`
+                : `${restoreResult.reason || 'تحقق من الصلاحيات ومستوى البوست'}\nالرابط الحي حاليًا: ${restoreResult.currentCode ? `discord.gg/${restoreResult.currentCode}` : 'غير معروف'}`)
             .setColor(restoreResult.ok ? Colors.Green : Colors.Red)
             .setTimestamp()] }).catch(() => {});
 
