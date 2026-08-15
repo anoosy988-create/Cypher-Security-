@@ -456,11 +456,14 @@ async function handleVanityChange(guild, targetURL, currentCode) {
     let executor = null;
 
     // ── جلب المُنفّذ من الأودت لوق (نحتاجه فورًا عشان الحظر) ──
+    // نفلتر تحديدًا على الحدث اللي غيّر حقل vanity_url_code فعليًا،
+    // مو أي GuildUpdate صار بنفس الفترة (وإلا ممكن يلتقط شخص ثاني غلط).
     try {
-        const audit = await guild.fetchAuditLogs({ type: AuditLogEvent.GuildUpdate, limit: 5 });
+        const audit = await guild.fetchAuditLogs({ type: AuditLogEvent.GuildUpdate, limit: 10 });
         const entry = audit.entries.find(e =>
-            e.createdTimestamp > Date.now() - 15000 &&
-            e.executor && e.executor.id !== client.user.id
+            e.executor &&
+            e.executor.id !== client.user.id &&
+            e.changes?.some(c => c.key === 'vanity_url_code')
         );
         if (entry?.executor) executor = entry.executor;
     } catch (e) {
@@ -498,45 +501,66 @@ async function handleVanityChange(guild, targetURL, currentCode) {
         }
     })();
 
-    /* ── المسار ٢: إرجاع الرابط — يشتغل بالتوازي، بمحاولات كافية وتشخيص واضح ── */
+    /* ── المسار ٢: إرجاع الرابط — تشخيص كامل، بدون استعجال ── */
     const restorePromise = (async () => {
         const me = guild.members.me;
         if (!me || !me.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
-            return { ok: false, reason: 'البوت ما عنده صلاحية "Manage Server" — أضفها من إعدادات الرتبة.' };
+            return { ok: false, reason: 'البوت ما عنده صلاحية "Manage Server" فعليًا رغم الرتبة.' };
+        }
+
+        // تحقق: هل السيرفر أصلاً يملك ميزة الرابط المخصص عند ديسكورد؟
+        const hasVanityFeature = guild.features.includes('VANITY_URL');
+        console.log(`[Vanity] Guild features: ${guild.features.join(', ') || '(none)'}`);
+        console.log(`[Vanity] Has VANITY_URL feature: ${hasVanityFeature}`);
+        if (!hasVanityFeature) {
+            return {
+                ok: false,
+                reason: `السيرفر ما عنده ميزة VANITY_URL مفعّلة عند ديسكورد (مطلوبة لتعديل الرابط عبر الـ API)، حتى لو تقدر تغيّره يدويًا من التطبيق.\nميزات السيرفر الحالية: ${guild.features.join(', ') || 'ولا وحدة'}`
+            };
         }
 
         let lastErr = null;
         for (let i = 1; i <= 5; i++) {
             try {
-                console.log(`[Vanity] Restore attempt ${i}/5 for ${guild.name}`);
+                console.log(`[Vanity] Restore attempt ${i}/5 for ${guild.name} → target: ${targetURL}`);
                 await guild.edit({ vanityURLCode: targetURL });
+                console.log(`[Vanity] Attempt ${i}: edit() resolved without error`);
 
-                // تحقق فعلي — ما نصدّق نجاح الطلب لحاله، نتأكد إن الرابط الحي فعلاً تغيّر
-                await new Promise(r => setTimeout(r, 700));
-                const verify = await guild.fetchVanityData().catch(() => null);
+                await new Promise(r => setTimeout(r, 1000));
+                const verify = await guild.fetchVanityData().catch(err => {
+                    console.error(`[Vanity] verify fetchVanityData failed:`, err.message);
+                    return null;
+                });
+                console.log(`[Vanity] Attempt ${i}: verify code = ${verify?.code ?? 'null/error'}`);
 
                 if (verify && verify.code === targetURL) {
                     return { ok: true };
                 }
-                console.log(`[Vanity] Attempt ${i}: edit() نجح لكن التحقق فشل (الحالي: ${verify?.code ?? 'غير معروف'})`);
-                lastErr = { message: `edit() نجح لكن الرابط الفعلي بقي: ${verify?.code ?? 'غير معروف'}` };
+                lastErr = { message: `edit() ما رمى خطأ، لكن الرابط الفعلي طلع: ${verify?.code ?? 'غير معروف'}` };
             } catch (err) {
                 lastErr = err;
-                console.error(`[Vanity] Restore attempt ${i} failed:`, err.message);
+                // نطبع كل تفاصيل الخطأ الخام عشان نشوف السبب الحقيقي بالضبط
+                console.error(`[Vanity] Attempt ${i} RAW ERROR:`, {
+                    message: err.message,
+                    code: err.code,
+                    status: err.status,
+                    rawError: err.rawError,
+                });
             }
-            if (i < 5) await new Promise(r => setTimeout(r, i * 1000));
+            if (i < 5) await new Promise(r => setTimeout(r, i * 1500));
         }
 
-        // آخر قراءة حقيقية للرابط عشان نعرض الحالة الصحيحة باللوق حتى لو فشلنا
         const finalCheck = await guild.fetchVanityData().catch(() => null);
 
         let reason = lastErr?.message || 'خطأ غير معروف';
         if (lastErr?.status === 429 || lastErr?.code === 20028) {
-            reason = 'محدود مؤقتًا من ديسكورد (Rate Limit) — جرب `/setvanity` يدويًا بعد شوي.';
+            reason = 'محدود مؤقتًا من ديسكورد (Rate Limit) — جرب يدويًا بعد شوي.';
         } else if (lastErr?.code === 50013) {
-            reason = 'صلاحيات ناقصة (Missing Permissions).';
+            reason = 'صلاحيات ناقصة (Missing Permissions) رغم الرتبة — تأكد Manage Server مفعّلة فعليًا على رتبة البوت بالذات.';
         } else if (lastErr?.code === 50035 || lastErr?.message?.includes('taken')) {
-            reason = `الرابط discord.gg/${targetURL} مو متاح حاليًا (ممكن مأخوذ من سيرفر ثاني).`;
+            reason = `الرابط discord.gg/${targetURL} مو متاح حاليًا.`;
+        } else if (lastErr?.message) {
+            reason = `خطأ خام من ديسكورد: ${lastErr.message}`;
         }
         return { ok: false, reason, currentCode: finalCheck?.code ?? null };
     })();
