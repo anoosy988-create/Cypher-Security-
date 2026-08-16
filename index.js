@@ -39,11 +39,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildInvites,
-    ],
-    rest: {
-        retries: 3,
-        timeout: 15000,
-    }
+    ]
 });
 
 function getLogChannel(guild) {
@@ -216,7 +212,6 @@ client.on('messageCreate', async (message) => {
 
     const guildId = message.guild.id;
 
-    // ── ق: قفل الشات ──
     if (cmd === 'ق') {
         try {
             await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
@@ -234,7 +229,6 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // ── ف: فتح الشات ──
     if (cmd === 'ف') {
         try {
             await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
@@ -252,7 +246,6 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // ── تح: إعطاء تحذير ──
     if (cmd === 'تح') {
         const target = message.mentions.members.first();
         if (!target) return message.reply('❌ استخدم: `تح @العضو السبب`').catch(() => {});
@@ -278,7 +271,6 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // ── شيل: إزالة تحذير ──
     if (cmd === 'شيل') {
         const target = message.mentions.members.first();
         if (!target) {
@@ -318,7 +310,6 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // ── تحذيرات: عرض تحذيرات العضو ──
     if (cmd === 'تحذيرات') {
         const target = message.mentions.members.first();
         if (!target) return message.reply('❌ استخدم: `تحذيرات @العضو`').catch(() => {});
@@ -353,12 +344,12 @@ client.on('messageCreate', async (message) => {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   ═══ Vanity Protection (Ultra Fast - Anti-Snipe Edition) ═══
+   ═══ Vanity Protection (Detection + Ban + Alert Only) ═══
    ═══════════════════════════════════════════════════════════ */
 
-const vanityState = new Map(); // guildId -> { lastCode, restoring: boolean }
+const vanityState = new Map();
 
-// ── اكتشاف فوري عبر Audit Log Entry Create (أسرع شيء ممكن) ──
+// ── اكتشاف فوري عبر Audit Log Entry Create ──
 client.on('guildAuditLogEntryCreate', async (auditLogEntry, guild) => {
     if (auditLogEntry.action !== AuditLogEvent.GuildUpdate) return;
 
@@ -372,12 +363,13 @@ client.on('guildAuditLogEntryCreate', async (auditLogEntry, guild) => {
     if (!vanityChange) return;
 
     const newCode = vanityChange.new;
+    const oldCode = vanityChange.old;
     if (newCode === savedURL) return;
 
     const executor = auditLogEntry.executor;
-    console.log(`[Vanity Audit] ${guild.name}: vanity changed by ${executor?.tag || 'unknown'}`);
+    console.log(`[Vanity Audit] ${guild.name}: ${oldCode} -> ${newCode} by ${executor?.tag || 'unknown'}`);
 
-    await handleVanityChange(guild, savedURL, newCode, executor, 'audit');
+    await handleVanityChange(guild, savedURL, oldCode, newCode, executor, 'audit');
 });
 
 // ── الحدث التقليدي (احتياطي) ──
@@ -394,15 +386,14 @@ client.on('guildUpdate', async (oldGuild, newGuild) => {
     if (oldVanity === newVanity || newVanity === savedURL) return;
 
     console.log(`[Vanity Event] ${newGuild.name}: ${oldVanity} -> ${newVanity}`);
-    await handleVanityChange(newGuild, savedURL, newVanity, null, 'event');
+    await handleVanityChange(newGuild, savedURL, oldVanity, newVanity, null, 'event');
 });
 
-// ── فحص دوري سريع (كل ثانية) ──
+// ── فحص دوري (كل ثانية) ──
 setInterval(async () => {
     for (const guild of client.guilds.cache.values()) {
         const guildId = guild.id;
         if (!db.isVanityProtectionEnabled(guildId)) continue;
-        if (vanityState.get(guildId)?.restoring) continue;
 
         const savedURL = db.getVanityURL(guildId);
         if (!savedURL) continue;
@@ -412,104 +403,56 @@ setInterval(async () => {
             if (!vanity) continue;
 
             const currentCode = vanity.code;
-            if (currentCode !== savedURL) {
+            const lastCode = vanityState.get(guildId)?.lastCode;
+
+            if (currentCode !== savedURL && currentCode !== lastCode) {
                 console.log(`[Vanity Poll] ${guild.name}: detected ${currentCode} != ${savedURL}`);
-                await handleVanityChange(guild, savedURL, currentCode, null, 'poll');
+                await handleVanityChange(guild, savedURL, lastCode || 'unknown', currentCode, null, 'poll');
             }
 
-            vanityState.set(guildId, { ...vanityState.get(guildId), lastCode: currentCode, restoring: false });
+            vanityState.set(guildId, { lastCode: currentCode });
         } catch (err) {
-            // تجاهل الأخطاء
+            // تجاهل
         }
     }
 }, 1000);
 
-// ── دالة مساعدة لحساب الوقت المتبقي من Rate Limit ──
-function formatMs(ms) {
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${Math.ceil(ms / 1000)} ثانية`;
-    const mins = Math.floor(ms / 60000);
-    const secs = Math.ceil((ms % 60000) / 1000);
-    return `${mins} دقيقة و ${secs} ثانية`;
-}
-
-// ── المعالج الرئيسي (أسرع إصدار) ──
-async function handleVanityChange(guild, targetURL, currentCode, executor, source) {
+// ── المعالج الرئيسي (باند + إزالة رتب + تنبيه) ──
+async function handleVanityChange(guild, savedURL, oldCode, newCode, executor, source) {
     const guildId = guild.id;
+    if (vanityState.get(guildId)?.handling) return;
+    vanityState.set(guildId, { ...vanityState.get(guildId), handling: true });
 
-    // منع التنفيذ المتكرر
-    if (vanityState.get(guildId)?.restoring) return;
-    vanityState.set(guildId, { lastCode: currentCode, restoring: true });
-
-    console.log(`[Vanity] ⚡ FAST RESTORE triggered via ${source} in ${guild.name}`);
+    console.log(`[Vanity] 🚨 ALERT in ${guild.name} | Source: ${source}`);
 
     const logCh = getLogChannel(guild);
-    let restored = false;
-    let restoreError = null;
-    let rateLimitInfo = null;
-
-    // ── محاولة إرجاع الاختصار فوراً ──
-    try {
-        await guild.client.rest.patch(`/guilds/${guild.id}/vanity-url`, {
-            body: { code: targetURL }
-        });
-        restored = true;
-        console.log(`[Vanity] ✅ RESTORED immediately!`);
-    } catch (err) {
-        restoreError = err;
-
-        // التحقق من Rate Limit
-        if (err.status === 429 || err.code === 429) {
-            const retryAfter = err.retryAfter || err.headers?.get?.('retry-after');
-            const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 5000;
-            rateLimitInfo = {
-                retryAfter: waitMs,
-                retryAfterFormatted: formatMs(waitMs),
-                scope: err.headers?.get?.('x-ratelimit-scope') || 'unknown'
-            };
-            console.error(`[Vanity] ❌ RATE LIMITED! Wait ${rateLimitInfo.retryAfterFormatted}`);
-        } else {
-            console.error(`[Vanity] ❌ First attempt failed:`, err.message);
-        }
-    }
-
-    // ── إذا فشلت المحاولة الأولى، نحاول مرة ثانية ──
-    if (!restored) {
-        const waitTime = rateLimitInfo ? rateLimitInfo.retryAfter + 500 : 1500;
-        console.log(`[Vanity] ⏳ Waiting ${formatMs(waitTime)} before 2nd attempt...`);
-        await new Promise(r => setTimeout(r, waitTime));
-
-        try {
-            await guild.client.rest.patch(`/guilds/${guild.id}/vanity-url`, {
-                body: { code: targetURL }
-            });
-            restored = true;
-            console.log(`[Vanity] ✅ RESTORED on 2nd attempt!`);
-        } catch (err) {
-            restoreError = err;
-            if (err.status === 429 || err.code === 429) {
-                const retryAfter = err.retryAfter || err.headers?.get?.('retry-after');
-                const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 10000;
-                rateLimitInfo = {
-                    retryAfter: waitMs,
-                    retryAfterFormatted: formatMs(waitMs),
-                    scope: err.headers?.get?.('x-ratelimit-scope') || 'unknown'
-                };
-                console.error(`[Vanity] ❌ RATE LIMITED again! Wait ${rateLimitInfo.retryAfterFormatted}`);
-            } else {
-                console.error(`[Vanity] ❌ 2nd attempt failed:`, err.message);
-            }
-        }
-    }
-
-    // ── باند المنفذ (متوازي) ──
+    let rolesRemoved = false;
     let banned = false;
+
+    // ── 1. إزالة جميع الرتب من المنفذ (Quarantine) ──
+    if (executor && executor.id !== client.user.id) {
+        try {
+            const member = await guild.members.fetch(executor.id).catch(() => null);
+            if (member) {
+                const roles = member.roles.cache.filter(r => r.id !== guild.roles.everyone.id && r.position < guild.members.me.roles.highest.position);
+                if (roles.size > 0) {
+                    await member.roles.remove(roles, '🛡️ محاولة تغيير Vanity URL');
+                    rolesRemoved = true;
+                    console.log(`[Vanity] 🗑️ Removed ${roles.size} roles from ${executor.tag}`);
+                }
+            }
+        } catch (err) {
+            console.error(`[Vanity] Remove roles failed:`, err.message);
+        }
+    }
+
+    // ── 2. باند فوري ──
     if (executor && executor.id !== client.user.id) {
         try {
             const member = await guild.members.fetch(executor.id).catch(() => null);
             if (member) {
                 await member.ban({
-                    reason: '🛡️ Cypher Protection - Vanity URL Change Detected',
+                    reason: '🛡️ Cypher Protection - تغيير Vanity URL',
                     deleteMessageSeconds: 0
                 });
                 banned = true;
@@ -520,39 +463,48 @@ async function handleVanityChange(guild, targetURL, currentCode, executor, sourc
         }
     }
 
-    // ── إرسال اللوق ──
-    if (logCh) {
-        const fields = [
-            { name: '👤 المنفذ', value: executor ? `<@${executor.id}> (${executor.tag})` : 'غير معروف', inline: true },
-            { name: '🔗 الكود الحالي', value: currentCode || 'محذوف', inline: true },
-            { name: '🔗 الكود المطلوب', value: `discord.gg/${targetURL}`, inline: true },
-            { name: '⚡ المصدر', value: source === 'audit' ? 'Audit Log (فوري)' : source === 'event' ? 'Guild Update' : 'فحص دوري', inline: true },
-            { name: '🔨 الحظر', value: banned ? `✅ تم حظر <@${executor.id}>` : (executor ? '❌ فشل' : 'لا يوجد'), inline: true }
-        ];
+    // ── 3. تنبيه الأونر في الخاص ──
+    if (OWNER_ID) {
+        try {
+            const owner = await client.users.fetch(OWNER_ID);
+            const alertEmbed = new EmbedBuilder()
+                .setTitle('🚨 تنبيه فوري: تغيير Vanity URL!')
+                .setDescription(`السيرفر: **${guild.name}**\nالاختصار تغيّر من \`discord.gg/${oldCode}\` إلى \`discord.gg/${newCode}\``)
+                .addFields(
+                    { name: '👤 المنفذ', value: executor ? `<@${executor.id}> (${executor.tag})` : 'غير معروف', inline: true },
+                    { name: '🔨 الحظر', value: banned ? '✅ تم الحظر' : '❌ فشل', inline: true },
+                    { name: '🗑️ الرتب', value: rolesRemoved ? '✅ تم إزالتها' : '❌ فشل', inline: true },
+                    { name: '⚡ المصدر', value: source === 'audit' ? 'Audit Log (فوري)' : source === 'event' ? 'Guild Update' : 'فحص دوري', inline: false }
+                )
+                .setColor(Colors.Red)
+                .setTimestamp();
 
-        if (rateLimitInfo) {
-            fields.push({
-                name: '⏳ Rate Limit',
-                value: `⚠️ تم الوصول لحد الطلبات!\n**المدة:** ${rateLimitInfo.retryAfterFormatted}\n**النطاق:** ${rateLimitInfo.scope}`,
-                inline: false
-            });
+            await owner.send({ embeds: [alertEmbed] });
+            console.log(`[Vanity] 📩 Alert sent to owner`);
+        } catch (err) {
+            console.error(`[Vanity] Owner DM failed:`, err.message);
         }
+    }
 
+    // ── 4. إرسال اللوق ──
+    if (logCh) {
         const embed = new EmbedBuilder()
-            .setTitle(restored ? '✅ تم إرجاع الاختصار' : '❌ فشل الإرجاع')
-            .setDescription(
-                restored
-                    ? `discord.gg/${targetURL}`
-                    : `**الخطأ:** ${restoreError?.message || 'غير معروف'}`
+            .setTitle('🚨 Vanity URL تغيّر!')
+            .setDescription(`**الاختصار القديم:** discord.gg/${oldCode || 'غير معروف'}\n**الاختصار الجديد:** discord.gg/${newCode}`)
+            .addFields(
+                { name: '👤 المنفذ', value: executor ? `<@${executor.id}> (${executor.tag})` : 'غير معروف', inline: true },
+                { name: '🔗 الكود المطلوب', value: `discord.gg/${savedURL}`, inline: true },
+                { name: '⚡ المصدر', value: source === 'audit' ? 'Audit Log (فوري)' : source === 'event' ? 'Guild Update' : 'فحص دوري', inline: true },
+                { name: '🔨 الحظر', value: banned ? `✅ تم حظر <@${executor.id}>` : (executor ? '❌ فشل' : 'لا يوجد'), inline: true },
+                { name: '🗑️ إزالة الرتب', value: rolesRemoved ? '✅ تمت' : '❌ فشل', inline: true }
             )
-            .addFields(fields)
-            .setColor(restored ? Colors.Green : (rateLimitInfo ? Colors.Orange : Colors.Red))
+            .setColor(Colors.Red)
             .setTimestamp();
 
         logCh.send({ embeds: [embed] }).catch(() => {});
     }
 
-    vanityState.set(guildId, { lastCode: targetURL, restoring: false });
+    vanityState.set(guildId, { ...vanityState.get(guildId), handling: false });
 }
 
 /* ─── Ready ─── */
