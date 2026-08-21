@@ -70,29 +70,19 @@ const warnSchema = new mongoose.Schema({
     date: { type: Number, default: () => Date.now() }
 });
 
-const counterSchema = new mongoose.Schema({
-    guildId: { type: String, unique: true },
-    nextNumber: { type: Number, default: 1 }
-});
-
 const Warn = mongoose.model('Warn', warnSchema);
-const Counter = mongoose.model('Counter', counterSchema);
 
 async function getWarnings(guildId, userId) {
     return await Warn.find({ guildId, userId }).sort({ number: 1 }).lean();
 }
 
-async function getNextWarningNumber(guildId) {
-    const counter = await Counter.findOneAndUpdate(
-        { guildId },
-        { $inc: { nextNumber: 1 } },
-        { upsert: true, new: true }
-    );
-    return counter.nextNumber - 1;
+async function getNextWarningNumber(guildId, userId) {
+    const lastWarn = await Warn.findOne({ guildId, userId }).sort({ number: -1 }).lean();
+    return (lastWarn?.number || 0) + 1;
 }
 
 async function addWarning(guildId, userId, reason, byId) {
-    const number = await getNextWarningNumber(guildId);
+    const number = await getNextWarningNumber(guildId, userId);
     await Warn.create({ guildId, userId, number, reason, by: byId });
     return number;
 }
